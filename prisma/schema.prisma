@@ -1,0 +1,234 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  phoneNumber String   @unique
+  firstName   String
+  lastName    String
+  email       String   @unique
+  password    String   // Hashed password
+  avatar      String?
+  userType    UserType @default(CUSTOMER)
+  isVerified  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  
+  // Auth tracking
+  lastLoginAt DateTime?
+  lastActivityAt DateTime?
+  
+  // Location
+  latitude    Float?
+  longitude   Float?
+  address     String?
+  city        String?
+  state       String?
+  country     String   @default("Nigeria")
+  
+  // Profile
+  bio         String?
+  skills      String[] // Array of skills for hustlers
+  rating      Float    @default(0.0)
+  totalRating Int      @default(0)
+  
+  // Stats
+  tasksCompleted    Int @default(0)
+  tasksPosted       Int @default(0)
+  totalEarnings     Int @default(0) // in kobo (₦1 = 100 kobo)
+  responseTime      Int @default(0) // in minutes
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  postedTasks    Task[]        @relation("TaskPoster")
+  acceptedTasks  Task[]        @relation("TaskHustler")
+  sentMessages   Message[]     @relation("MessageSender")
+  chats          ChatMember[]
+  reviews        Review[]      @relation("ReviewAuthor")
+  receivedReviews Review[]     @relation("ReviewTarget")
+  notifications  Notification[]
+  
+  @@map("users")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String
+  category    TaskCategory
+  budget      Int        // in kobo (₦1 = 100 kobo)
+  deadline    DateTime?
+  status      TaskStatus @default(OPEN)
+  priority    TaskPriority @default(NORMAL)
+  
+  // Location
+  latitude    Float?
+  longitude   Float?
+  address     String?
+  city        String?
+  state       String?
+  
+  // Media
+  images      String[]   // Array of image URLs
+  
+  // Relations
+  posterId    String
+  poster      User       @relation("TaskPoster", fields: [posterId], references: [id])
+  
+  hustlerId   String?
+  hustler     User?      @relation("TaskHustler", fields: [hustlerId], references: [id])
+  
+  chat        Chat?
+  reviews     Review[]
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@map("tasks")
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  taskId    String   @unique
+  task      Task     @relation(fields: [taskId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  members   ChatMember[]
+  messages  Message[]
+  
+  @@map("chats")
+}
+
+model ChatMember {
+  id     String @id @default(cuid())
+  chatId String
+  userId String
+  
+  chat   Chat   @relation(fields: [chatId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  
+  joinedAt DateTime @default(now())
+  
+  @@unique([chatId, userId])
+  @@map("chat_members")
+}
+
+model Message {
+  id       String      @id @default(cuid())
+  content  String
+  type     MessageType @default(TEXT)
+  
+  chatId   String
+  chat     Chat        @relation(fields: [chatId], references: [id])
+  
+  senderId String
+  sender   User        @relation("MessageSender", fields: [senderId], references: [id])
+  
+  // Media
+  imageUrl String?
+  
+  createdAt DateTime   @default(now())
+  
+  @@map("messages")
+}
+
+model Review {
+  id       String @id @default(cuid())
+  rating   Int    // 1-5 stars
+  comment  String?
+  
+  taskId   String
+  task     Task   @relation(fields: [taskId], references: [id])
+  
+  authorId String
+  author   User   @relation("ReviewAuthor", fields: [authorId], references: [id])
+  
+  targetId String
+  target   User   @relation("ReviewTarget", fields: [targetId], references: [id])
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([taskId, authorId])
+  @@map("reviews")
+}
+
+model Notification {
+  id      String           @id @default(cuid())
+  title   String
+  message String
+  type    NotificationType
+  isRead  Boolean          @default(false)
+  
+  userId  String
+  user    User             @relation(fields: [userId], references: [id])
+  
+  // Optional references
+  taskId  String?
+  chatId  String?
+  
+  createdAt DateTime @default(now())
+  
+  @@map("notifications")
+}
+
+// Enums
+enum UserType {
+  CUSTOMER
+  HUSTLER
+  BOTH
+}
+
+enum TaskCategory {
+  SHOPPING
+  CLEANING
+  BARBING
+  WRITING
+  DELIVERY
+  REPAIRS
+  OTHER
+}
+
+enum TaskStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  LOCATION
+  SYSTEM
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_COMPLETED
+  NEW_MESSAGE
+  PAYMENT_RECEIVED
+  REVIEW_RECEIVED
+  SYSTEM
+}
