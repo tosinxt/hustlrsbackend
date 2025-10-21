@@ -50,13 +50,41 @@ router.post(
   validateRequest,
   async (req, res) => {
     try {
-      const { email, password, firstName, lastName, phoneNumber, userType = 'CUSTOMER' } = req.body;
+      // Handle both camelCase and snake_case request bodies
+      const { 
+        email, 
+        password, 
+        firstName, 
+        lastName, 
+        phoneNumber,
+        // Handle both camelCase and snake_case
+        first_name = firstName,
+        last_name = lastName,
+        phone_number = phoneNumber,
+        user_type = 'CUSTOMER',
+        userType = user_type
+      } = req.body;
+
+      // Validate required fields
+      if (!email || !password || !first_name || !last_name || !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields',
+          errors: [
+            !email && 'Email is required',
+            !password && 'Password is required',
+            !first_name && 'First name is required',
+            !last_name && 'Last name is required',
+            !phone_number && 'Phone number is required'
+          ].filter(Boolean)
+        });
+      }
 
       // Check if user already exists
       const { data: existingUser, error: userError } = await supabase
         .from('users')
         .select('*')
-        .or(`email.eq.${email},phone_number.eq.${phoneNumber}`)
+        .or(`email.eq.${email},phone_number.eq.${phone_number}`)
         .maybeSingle();
 
       if (existingUser) {
@@ -74,12 +102,12 @@ router.post(
         .from('users')
         .insert([
           {
-            email,
+            email: email.toLowerCase().trim(),
             password_hash: hashedPassword,
-            first_name: firstName,
-            last_name: lastName,
-            phone_number: phoneNumber,
-            user_type: userType,
+            first_name: first_name.trim(),
+            last_name: last_name.trim(),
+            phone_number: phone_number.trim(),
+            user_type: userType.toUpperCase(),
             is_verified: false,
             is_active: true
           }
