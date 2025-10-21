@@ -97,6 +97,16 @@ app.use('/api/users', authMiddleware, userRouter);
 app.use('/api/chat', authMiddleware, chatRouter);
 app.use('/api/upload', authMiddleware, uploadRouter);
 
+// Root route
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'Welcome to Hustlrs API',
+    documentation: 'https://hustlrsbackend.onrender.com/api-docs',
+    status: 'operational',
+    version: '1.0.0'
+  });
+});
+
 // 404 handler
 app.use((req, res, next) => {
   const error = new Error(`Not Found - ${req.originalUrl}`);
