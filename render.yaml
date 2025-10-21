@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: hustlrs-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        required: true
+      - key: SUPABASE_ANON_KEY
+        required: true
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        required: true
+      - key: JWT_SECRET
+        required: true
+      - key: DATABASE_URL
+        required: true
