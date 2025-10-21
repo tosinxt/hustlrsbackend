@@ -55,7 +55,10 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// Register new user
+// In-memory store for unverified users (in production, use Redis or similar)
+const unverifiedUsers = new Map();
+
+// Register new user (creates unverified account)
 router.post(
   '/register',
   [
@@ -99,8 +102,8 @@ router.post(
         });
       }
 
-      // Check if user already exists
-      const { data: existingUser, error: userError } = await supabase
+      // Check if user already exists (verified or unverified)
+      const { data: existingUser } = await supabase
         .from('users')
         .select('*')
         .or(`email.eq.${email},phone_number.eq.${phone_number}`)
@@ -113,56 +116,52 @@ router.post(
         });
       }
 
-      // Hash password
-      const hashedPassword = await hashPassword(password);
-
-      // Create user using admin client to bypass RLS
-      const { data: newUser, error: createError } = await supabaseAdmin
-        .from('users')
-        .insert([
-          {
-            email: email.toLowerCase().trim(),
-            password_hash: hashedPassword,
-            first_name: first_name.trim(),
-            last_name: last_name.trim(),
-            phone_number: phone_number.trim(),
-            user_type: userType.toUpperCase(),
-            is_verified: false,
-            is_active: true
-          }
-        ])
-        .select()
-        .single();
-
-      if (createError) throw createError;
-      if (!newUser) throw new Error('Failed to create user');
-
-      // Send verification code
-      const smsResult = await sendVerificationCode(phone_number);
-      if (!smsResult.success) {
-        console.error('Failed to send verification code:', smsResult.message);
-        // Don't fail the registration, just log the error
+      // Check if there's already an unverified user with this email/phone
+      for (const [_, user] of unverifiedUsers.entries()) {
+        if (user.email === email || user.phone_number === phone_number) {
+          // Remove old unverified user if exists
+          unverifiedUsers.delete(user.verificationCode);
+          break;
+        }
       }
 
-      // Generate token
-      const token = generateToken(newUser.id);
+      // Generate verification code
+      const verificationCode = generateVerificationCode();
+      const hashedPassword = await hashPassword(password);
 
-      // Return success response
-      return res.status(201).json({
+      // Store user data temporarily (in production, use Redis with expiration)
+      const unverifiedUser = {
+        email: email.toLowerCase().trim(),
+        password_hash: hashedPassword,
+        first_name: first_name.trim(),
+        last_name: last_name.trim(),
+        phone_number: phone_number.trim(),
+        user_type: userType.toUpperCase(),
+        verificationCode,
+        expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes expiration
+        verificationAttempts: 0
+      };
+
+      unverifiedUsers.set(verificationCode, unverifiedUser);
+
+      // Send verification code
+      const smsResult = await sendVerificationCode(phone_number, verificationCode);
+      
+      if (!smsResult.success) {
+        console.error('Failed to send verification code:', smsResult.message);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to send verification code. Please try again.'
+        });
+      }
+
+      // Return success response without creating user in DB yet
+      return res.status(200).json({
         success: true,
-        message: 'User registered successfully. ' + (smsResult.success ? 'Verification code sent.' : 'Failed to send verification code.'),
+        message: 'Verification code sent to your phone number',
         requiresVerification: true,
         data: {
-          user: {
-            id: newUser.id,
-            email: newUser.email,
-            firstName: newUser.first_name,
-            lastName: newUser.last_name,
-            phoneNumber: newUser.phone_number,
-            userType: newUser.user_type,
-            isVerified: newUser.is_verified
-          },
-          token
+          identifier: email || phone_number
         }
       });
     } catch (error) {
@@ -464,7 +463,7 @@ const getCurrentUser = async (req, res) => {
 // Add the route for getting current user
 router.get('/me', getCurrentUser);
 
-// Verify signup (email or phone)
+// Verify signup and create user
 router.post(
   '/verify-signup',
   [
@@ -474,50 +473,103 @@ router.post(
   validateRequest,
   async (req, res) => {
     try {
+      console.log('Received verify-signup request:', req.body);
+      
       const { identifier, code } = req.body;
       
-      // In a real app, you would verify the code from your database or verification service
-      // For now, we'll just check if the code is 6 digits and numeric
-      if (code.length !== 6 || !/^\d+$/.test(code)) {
+      if (!identifier || !code) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid verification code'
+          message: 'Identifier and code are required',
+          received: { identifier: !!identifier, code: !!code }
         });
       }
 
-      // Find user by email or phone
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
-        .single();
+      // Find unverified user by code
+      let unverifiedUser = null;
+      for (const [storedCode, user] of unverifiedUsers.entries()) {
+        if (storedCode === code && 
+            (user.email === identifier || user.phone_number === identifier)) {
+          unverifiedUser = user;
+          break;
+        }
+      }
 
-      if (userError || !user) {
-        return res.status(404).json({
+      if (!unverifiedUser) {
+        return res.status(400).json({
           success: false,
-          message: 'User not found'
+          message: 'Invalid verification code or identifier',
+          requiresResend: true
         });
       }
 
-      // Update user as verified
-      const { data: updatedUser, error: updateError } = await supabaseAdmin
+      // Check if verification code has expired
+      if (unverifiedUser.expiresAt < Date.now()) {
+        unverifiedUsers.delete(code);
+        return res.status(400).json({
+          success: false,
+          message: 'Verification code has expired',
+          requiresResend: true
+        });
+      }
+
+      // Check verification attempts
+      if (unverifiedUser.verificationAttempts >= 3) {
+        unverifiedUsers.delete(code);
+        return res.status(400).json({
+          success: false,
+          message: 'Too many attempts. Please request a new code.',
+          requiresResend: true
+        });
+      }
+
+      // Verify the code
+      if (unverifiedUser.verificationCode !== code) {
+        unverifiedUser.verificationAttempts += 1;
+        unverifiedUsers.set(code, unverifiedUser);
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid verification code',
+          attemptsRemaining: 3 - unverifiedUser.verificationAttempts
+        });
+      }
+
+      // Create the user in the database
+      const { data: newUser, error: createError } = await supabaseAdmin
         .from('users')
-        .update({ is_verified: true })
-        .eq('id', user.id)
+        .insert([
+          {
+            email: unverifiedUser.email,
+            password_hash: unverifiedUser.password_hash,
+            first_name: unverifiedUser.first_name,
+            last_name: unverifiedUser.last_name,
+            phone_number: unverifiedUser.phone_number,
+            user_type: unverifiedUser.user_type,
+            is_verified: true,
+            is_active: true
+          }
+        ])
         .select()
         .single();
 
-      if (updateError) throw updateError;
+      if (createError) {
+        console.error('Error creating user:', createError);
+        throw createError;
+      }
+
+      // Remove from unverified users
+      unverifiedUsers.delete(code);
 
       // Generate token
-      const token = generateToken(updatedUser.id);
+      const token = generateToken(newUser.id);
 
       // Remove sensitive data
-      const { password, ...userWithoutPassword } = updatedUser;
+      const { password_hash, ...userWithoutPassword } = newUser;
 
-      return res.json({
+      return res.status(201).json({
         success: true,
-        message: 'Account verified successfully',
+        message: 'Account created and verified successfully',
         data: {
           user: userWithoutPassword,
           token
