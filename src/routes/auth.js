@@ -169,112 +169,126 @@ router.post(
       console.error('Registration error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Validation failed',
-        errors: errors.array()
+        message: 'Registration failed',
+        error: error.message
       });
     }
-
-    const { identifier, password } = req.body;
-
-    // Find user by email or phone
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: identifier },
-          { phoneNumber: identifier }
-        ]
-      }
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Check password
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Check if user needs OTP due to inactivity
-    if (needsOTPVerification(user)) {
-      // Generate and send OTP
-      const code = generateVerificationCode();
-      verificationCodes.set(identifier, {
-        code,
-        userId: user.id,
-        expiresAt: Date.now() + 10 * 60 * 1000
-      });
-
-      // Try to send OTP
-      try {
-        if (user.phoneNumber && process.env.TWILIO_ACCOUNT_SID) {
-          await twilioClient.messages.create({
-            body: `Your Hustlrs verification code is: ${code}`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: user.phoneNumber
-          });
-        }
-      } catch (error) {
-        console.log('OTP send failed, logging code:', code);
-      }
-
-      console.log('🔍 INACTIVITY OTP:', code, 'for', identifier);
-
-      return res.json({
-        success: false,
-        requiresOTP: true,
-        message: 'Account inactive. Please verify with OTP.',
-        identifier
-      });
-    }
-
-    // Update last login and activity
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        lastLoginAt: new Date(),
-        lastActivityAt: new Date()
-      }
-    });
-
-    // Generate JWT token
-    const token = generateToken(user.id);
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          phoneNumber: user.phoneNumber,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          userType: user.userType,
-          isVerified: user.isVerified,
-          rating: user.rating,
-          tasksCompleted: user.tasksCompleted,
-          avatar: user.avatar
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Login failed'
-    });
   }
-});
+);
+
+// User login
+router.post(
+  '/login',
+  [
+    body('identifier').notEmpty().withMessage('Email or phone number is required'),
+    body('password').notEmpty().withMessage('Password is required')
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { identifier, password } = req.body;
+
+      // Find user by email or phone
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
+        .single();
+
+      if (userError || !user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
+      // Check password
+      const isValidPassword = await bcrypt.compare(password, user.password_hash);
+      if (!isValidPassword) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
+      // Check if user needs OTP due to inactivity
+      if (needsOTPVerification(user)) {
+        // Generate and send OTP
+        const code = generateVerificationCode();
+        verificationCodes.set(identifier, {
+          code,
+          userId: user.id,
+          expiresAt: Date.now() + 10 * 60 * 1000
+        });
+
+        // Try to send OTP
+        try {
+          if (user.phone_number && process.env.TWILIO_ACCOUNT_SID) {
+            await twilioClient.messages.create({
+              body: `Your Hustlrs verification code is: ${code}`,
+              from: process.env.TWILIO_PHONE_NUMBER,
+              to: user.phone_number
+            });
+          }
+        } catch (error) {
+          console.log('OTP send failed, logging code:', code);
+        }
+
+        console.log('🔍 INACTIVITY OTP:', code, 'for', identifier);
+
+        return res.json({
+          success: false,
+          requiresOTP: true,
+          message: 'Account inactive. Please verify with OTP.',
+          identifier
+        });
+      }
+
+      // Update last login time
+      await supabase
+        .from('users')
+        .update({ 
+          last_login_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      // Generate JWT token
+      const token = generateToken(user.id);
+
+      // Prepare user data without sensitive information
+      const userData = {
+        id: user.id,
+        email: user.email,
+        phoneNumber: user.phone_number,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        userType: user.user_type,
+        isVerified: user.is_verified,
+        rating: user.rating || 0,
+        tasksCompleted: user.tasks_completed || 0,
+        avatar: user.avatar_url
+      };
+
+      // Return success response
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
+          token,
+          user: userData
+        }
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Login failed',
+        error: error.message
+      });
+    }
+  }
+);
 
 /**
  * @route   POST /api/auth/verify-inactivity
