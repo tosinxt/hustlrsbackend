@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 
 interface AppError extends Error {
   statusCode?: number;
-  code?: number;
+  code?: string | number;
   errors?: any[];
+  details?: any;
+  detail?: string;
 }
 
 export const errorHandler = (
@@ -34,9 +36,9 @@ export const errorHandler = (
     errors = [];
     
     // Format Joi validation errors
-    if (err.details) {
-      errors = err.details.map((detail: any) => ({
-        field: detail.path.join('.'),
+    if (err.details && Array.isArray(err.details)) {
+      errors = (err.details as any[]).map((detail: any) => ({
+        field: Array.isArray(detail.path) ? detail.path.join('.') : detail.path,
         message: detail.message,
       }));
     }
@@ -57,9 +59,10 @@ export const errorHandler = (
     // PostgreSQL unique violation
     statusCode = 409;
     message = 'Duplicate key error';
+    const fieldMatch = typeof err.detail === 'string' ? err.detail.match(/\(([^)]+)\)=/)?.[1] : undefined;
     errors = [{
       message: 'A record with this value already exists',
-      field: err.detail?.match(/Key \(([^)]+)\)/)?.[1],
+      field: fieldMatch,
     }];
   } else if (err.code === '23503') {
     // Foreign key violation
@@ -67,7 +70,7 @@ export const errorHandler = (
     message = 'Reference error';
     errors = [{
       message: 'Invalid reference',
-      detail: err.detail,
+      detail: typeof err.detail === 'string' ? err.detail : 'Reference error occurred',
     }];
   }
 

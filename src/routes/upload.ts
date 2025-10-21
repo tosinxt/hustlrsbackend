@@ -133,7 +133,7 @@ router.post('/signed-url', async (req: any, res) => {
     // Generate a signed URL for direct upload
     const { data, error } = await supabase.storage
       .from(bucket)
-      .createSignedUrl(uniqueFileName, 3600, 'upload'); // 1 hour expiration
+      .createSignedUploadUrl(uniqueFileName);
 
     if (error) throw error;
 

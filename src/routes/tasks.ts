@@ -1,7 +1,75 @@
-import { Router } from 'express';
-import { body, param, query, validationResult } from 'express-validator';
+import { Router, Request, Response, NextFunction } from 'express';
+import { body, param, query, validationResult, ValidationChain } from 'express-validator';
 import { supabase } from '../services/supabase';
 import { authMiddleware } from '../middleware/auth';
+
+interface Task {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  budget: number;
+  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  poster_id: string;
+  hustler_id?: string;
+  deadline?: string;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  city?: string;
+  state?: string;
+  image_urls?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface User {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  avatar_url?: string;
+  rating?: number;
+  user_type: 'CUSTOMER' | 'HUSTLER' | 'BOTH';
+}
+
+// Extend the Express Request type to include our custom properties
+declare global {
+  namespace Express {
+    // This matches the existing user type from the auth middleware
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        user_type: string;
+      };
+    }
+  }
+}
+
+interface TaskRequestBody {
+  title?: string;
+  description?: string;
+  category?: string;
+  budget?: number;
+  status?: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  hustlerId?: string;
+  deadline?: string;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  city?: string;
+  state?: string;
+  imageUrls?: string[];
+}
+
+interface TaskQueryParams {
+  status?: string;
+  category?: string;
+  minBudget?: string;
+  maxBudget?: string;
+  [key: string]: string | undefined;
+}
 
 export const router = Router();
 
@@ -9,10 +77,14 @@ export const router = Router();
 router.use(authMiddleware);
 
 // Get all tasks with optional filters
-router.get('/', async (req: any, res) => {
+router.get<{}, any, any, TaskQueryParams>('/', async (req: Request, res: Response) => {
   try {
-    const { status, category, minBudget, maxBudget } = req.query;
-    const userId = req.user.id;
+    const { status, category, minBudget, maxBudget } = req.query as TaskQueryParams;
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const userId = user.id;
 
     let query = supabase
       .from('tasks')
@@ -46,37 +118,41 @@ router.get('/', async (req: any, res) => {
 });
 
 // Get a single task by ID
-router.get('/:id', [param('id').isUUID()], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+router.get<{ id: string }>(
+  '/:id',
+  [param('id').isUUID()],
+  async (req: Request<{ id: string }>, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { id } = req.params;
+
+      const { data: task, error } = await supabase
+        .from('tasks')
+        .select('*, poster:users!tasks_poster_id_fkey(*)')
+        .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      if (!task) {
+        return res.status(404).json({ message: 'Task not found' });
+      }
+
+      res.json(task);
+    } catch (error: any) {
+      console.error('Get task error:', error);
+      res.status(500).json({
+        message: error.message || 'An error occurred while fetching the task',
+      });
     }
-
-    const { id } = req.params;
-
-    const { data: task, error } = await supabase
-      .from('tasks')
-      .select('*, poster:users!tasks_poster_id_fkey(*)')
-      .eq('id', id)
-      .single();
-
-    if (error) throw error;
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
-
-    res.json(task);
-  } catch (error: any) {
-    console.error('Get task error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred while fetching the task',
-    });
   }
-});
+);
 
 // Create a new task
-router.post(
+router.post<{}, any, TaskRequestBody>(
   '/',
   [
     body('title').isString().trim().notEmpty(),
@@ -91,14 +167,18 @@ router.post(
     body('state').optional().isString(),
     body('imageUrls').optional().isArray(),
   ],
-  async (req: any, res) => {
+  async (req: Request, res: Response) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const userId = req.user.id;
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      const userId = user.id;
       const {
         title,
         description,
@@ -111,7 +191,7 @@ router.post(
         city,
         state,
         imageUrls = [],
-      } = req.body;
+      } = req.body as TaskRequestBody;
 
       const { data: task, error } = await supabase
         .from('tasks')
@@ -146,7 +226,7 @@ router.post(
 );
 
 // Update a task
-router.put(
+router.put<{ id: string }, any, TaskRequestBody>(
   '/:id',
   [
     param('id').isUUID(),
@@ -155,15 +235,19 @@ router.put(
     body('status').optional().isIn(['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']),
     body('hustlerId').optional().isUUID(),
   ],
-  async (req: any, res) => {
+  async (req: Request<{ id: string }, any, TaskRequestBody>, res: Response) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { id } = req.params;
-      const userId = req.user.id;
+      const id = req.params.id as string;
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      const userId = user.id;
       const updates = { ...req.body };
 
       // Only the task poster can update the task
@@ -217,49 +301,61 @@ router.put(
 );
 
 // Delete a task
-router.delete('/:id', [param('id').isUUID()], async (req: any, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+router.delete<{ id: string }>(
+  '/:id',
+  [param('id').isUUID()],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { id } = req.params;
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      const userId = user.id;
+
+      // Only the task poster can delete the task
+      const { data: existingTask, error: fetchError } = await supabase
+        .from('tasks')
+        .select('poster_id')
+        .eq('id', id)
+        .single();
+
+      if (fetchError) throw fetchError;
+      if (!existingTask) {
+        return res.status(404).json({ message: 'Task not found' });
+      }
+      if (existingTask.poster_id !== userId) {
+        return res.status(403).json({ message: 'Not authorized to delete this task' });
+      }
+
+      // Delete the task
+      const { error } = await supabase.from('tasks').delete().eq('id', id);
+
+      if (error) throw error;
+
+      res.json({ message: 'Task deleted successfully' });
+    } catch (error: any) {
+      console.error('Delete task error:', error);
+      res.status(500).json({
+        message: error.message || 'An error occurred while deleting the task',
+      });
     }
-
-    const { id } = req.params;
-    const userId = req.user.id;
-
-    // Only the task poster can delete the task
-    const { data: existingTask, error: fetchError } = await supabase
-      .from('tasks')
-      .select('poster_id')
-      .eq('id', id)
-      .single();
-
-    if (fetchError) throw fetchError;
-    if (!existingTask) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
-    if (existingTask.poster_id !== userId) {
-      return res.status(403).json({ message: 'Not authorized to delete this task' });
-    }
-
-    // Delete the task
-    const { error } = await supabase.from('tasks').delete().eq('id', id);
-
-    if (error) throw error;
-
-    res.json({ message: 'Task deleted successfully' });
-  } catch (error: any) {
-    console.error('Delete task error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred while deleting the task',
-    });
   }
-});
+);
 
 // Get tasks posted by the current user
-router.get('/my/tasks', async (req: any, res) => {
+router.get('/my/tasks', async (req: Request, res: Response) => {
   try {
-    const userId = req.user.id;
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const userId = user.id;
 
     const { data: tasks, error } = await supabase
       .from('tasks')
@@ -279,9 +375,13 @@ router.get('/my/tasks', async (req: any, res) => {
 });
 
 // Get tasks assigned to the current user
-router.get('/my/assigned', async (req: any, res) => {
+router.get('/my/assigned', async (req: Request, res: Response) => {
   try {
-    const userId = req.user.id;
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const userId = user.id;
 
     const { data: tasks, error } = await supabase
       .from('tasks')

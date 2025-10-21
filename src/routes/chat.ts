@@ -1,4 +1,18 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+
+// Extend the Express Request type to include our custom properties
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        user_type: string;
+      };
+      app: any; // For WebSocket
+    }
+  }
+}
 import { body, param, query, validationResult } from 'express-validator';
 import { supabase } from '../services/supabase';
 import { authMiddleware } from '../middleware/auth';
@@ -9,8 +23,11 @@ export const router = Router();
 router.use(authMiddleware);
 
 // Get all chats for the current user
-router.get('/', async (req: any, res) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
     const userId = req.user.id;
 
     // Get all chats where the user is a member
@@ -39,7 +56,10 @@ router.get('/', async (req: any, res) => {
 });
 
 // Get a single chat with messages
-router.get('/:chatId', [param('chatId').isUUID()], async (req: any, res) => {
+router.get<{ chatId: string }>(
+  '/:chatId',
+  [param('chatId').isUUID()],
+  async (req: Request<{ chatId: string }>, res: Response) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -47,6 +67,9 @@ router.get('/:chatId', [param('chatId').isUUID()], async (req: any, res) => {
     }
 
     const { chatId } = req.params;
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
     const userId = req.user.id;
 
     // Verify the user is a member of this chat
@@ -87,14 +110,18 @@ router.get('/:chatId', [param('chatId').isUUID()], async (req: any, res) => {
 });
 
 // Send a message in a chat
-router.post(
+router.post<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' | 'SYSTEM' }>(
   '/:chatId/messages',
   [
     param('chatId').isUUID(),
     body('content').isString().trim().notEmpty(),
     body('type').optional().isIn(['TEXT', 'IMAGE', 'SYSTEM']).default('TEXT'),
   ],
-  async (req: any, res) => {
+  async (req: Request<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' | 'SYSTEM' }>, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -151,14 +178,18 @@ router.post(
 );
 
 // Get chat messages with pagination
-router.get(
+router.get<{ chatId: string }, any, any, { limit?: string; offset?: string }>(
   '/:chatId/messages',
   [
     param('chatId').isUUID(),
     query('limit').optional().isInt({ min: 1, max: 100 }).default(50),
     query('offset').optional().isInt({ min: 0 }).default(0),
   ],
-  async (req: any, res) => {
+  async (req: Request<{ chatId: string }, any, any, { limit?: string; offset?: string }>, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -166,7 +197,9 @@ router.get(
       }
 
       const { chatId } = req.params;
-      const { limit, offset } = req.query;
+      // Convert limit and offset to numbers with default values
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+      const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
       const userId = req.user.id;
 
       // Verify the user is a member of this chat
@@ -202,10 +235,13 @@ router.get(
 );
 
 // Mark messages as read
-router.post(
+router.post<{ chatId: string }>(
   '/:chatId/messages/read',
   [param('chatId').isUUID()],
-  async (req: any, res) => {
+  async (req: Request<{ chatId: string }>, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {

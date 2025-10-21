@@ -1,4 +1,17 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { User as AuthUser } from '@supabase/supabase-js';
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        user_type: string;
+      };
+    }
+  }
+}
 import { body, param, query, validationResult } from 'express-validator';
 import { supabase } from '../services/supabase';
 import { authMiddleware, isHustler, isCustomer } from '../middleware/auth';
@@ -9,7 +22,10 @@ export const router = Router();
 router.use(authMiddleware);
 
 // Get current user profile
-router.get('/me', async (req: any, res) => {
+router.get('/me', async (req: Request, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
   try {
     const userId = req.user.id;
 
@@ -54,7 +70,10 @@ router.put(
     body('country').optional().isString(),
     body('avatarUrl').optional().isString(),
   ],
-  async (req: any, res) => {
+  async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -108,9 +127,12 @@ router.put(
   '/me/password',
   [
     body('currentPassword').isString().notEmpty(),
-    body('newPassword').isString().min(6),
+    body('newPassword').isString().isLength({ min: 6 }),
   ],
-  async (req: any, res) => {
+  async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -160,7 +182,7 @@ router.put(
 );
 
 // Get user by ID (public profile)
-router.get('/:id', [param('id').isUUID()], async (req, res) => {
+router.get<{ id: string }>('/:id', [param('id').isUUID()], async (req: Request<{ id: string }>, res: Response) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -190,7 +212,7 @@ router.get('/:id', [param('id').isUUID()], async (req, res) => {
 });
 
 // Get user reviews
-router.get('/:id/reviews', [param('id').isUUID()], async (req, res) => {
+router.get<{ id: string }>('/:id/reviews', [param('id').isUUID()], async (req: Request<{ id: string }>, res: Response) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -266,7 +288,10 @@ router.post('/me/avatar', async (req: any, res) => {
 });
 
 // Delete user account
-router.delete('/me', async (req: any, res) => {
+router.delete('/me', async (req: Request, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
   try {
     const userId = req.user.id;
 

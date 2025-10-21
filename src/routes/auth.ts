@@ -1,7 +1,37 @@
-import { Router } from 'express';
-import { body, validationResult } from 'express-validator';
+import { Router, Request, Response, NextFunction } from 'express';
+import { body, validationResult, ValidationChain } from 'express-validator';
 import { supabase } from '../services/supabase';
 import jwt from 'jsonwebtoken';
+
+type UserType = 'CUSTOMER' | 'HUSTLER' | 'BOTH';
+
+interface User {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  user_type: UserType;
+  last_login_at?: string;
+  last_activity_at?: string;
+}
+
+interface AuthRequest extends Request {
+  body: {
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    phoneNumber?: string;
+    userType?: UserType;
+    token?: string;
+    newPassword?: string;
+  };
+  headers: {
+    authorization?: string;
+  };
+  user?: any; // You might want to type this more specifically
+}
 
 export const router = Router();
 
@@ -25,7 +55,7 @@ router.post(
     body('phoneNumber').notEmpty().trim(),
     body('userType').optional().isIn(['CUSTOMER', 'HUSTLER', 'BOTH']),
   ],
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       // Validate request
       const errors = validationResult(req);
@@ -107,7 +137,7 @@ router.post(
     body('email').isEmail().normalizeEmail(),
     body('password').exists(),
   ],
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -220,7 +250,7 @@ router.post('/logout', async (req, res) => {
 router.post(
   '/forgot-password',
   [body('email').isEmail().normalizeEmail()],
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -255,7 +285,7 @@ router.post(
     body('token').notEmpty(),
     body('newPassword').isLength({ min: 6 }),
   ],
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
