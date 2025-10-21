@@ -55,8 +55,57 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// In-memory store for unverified users (in production, use Redis or similar)
-const unverifiedUsers = new Map(); // Maps identifier (email/phone) to user data
+// Store and retrieve unverified users from Supabase
+const storeUnverifiedUser = async (userData) => {
+  const { email, phone_number, verificationCode, ...rest } = userData;
+  
+  // Delete any existing unverified user with the same email or phone
+  await supabaseAdmin
+    .from('unverified_users')
+    .delete()
+    .or(`email.eq.${email},phone_number.eq.${phone_number}`);
+  
+  // Insert new unverified user
+  const { data, error } = await supabaseAdmin
+    .from('unverified_users')
+    .insert([{
+      email: email || null,
+      phone_number: phone_number || null,
+      verification_code: verificationCode,
+      user_data: rest,
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 minutes
+    }])
+    .select()
+    .single();
+    
+  if (error) throw error;
+  return data;
+};
+
+const getUnverifiedUser = async (identifier) => {
+  const { data, error } = await supabaseAdmin
+    .from('unverified_users')
+    .select('*')
+    .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
+    .single();
+    
+  if (error || !data) return null;
+  
+  return {
+    ...data.user_data,
+    verificationCode: data.verification_code,
+    verificationAttempts: data.verification_attempts,
+    expiresAt: new Date(data.expires_at).getTime()
+  };
+};
+
+const incrementVerificationAttempts = async (id) => {
+  const { error } = await supabaseAdmin.rpc('increment_verification_attempts', {
+    user_id: id
+  });
+  
+  if (error) throw error;
+};
 
 // Register new user (creates unverified account)
 router.post(
@@ -129,21 +178,19 @@ router.post(
       const verificationCode = generateVerificationCode();
       const hashedPassword = await hashPassword(password);
 
-      // Store user data temporarily using email/phone as key
-      const identifier = email.toLowerCase().trim() || phone_number.trim();
+      // Store user data in Supabase
       const unverifiedUser = {
         email: email.toLowerCase().trim(),
+        phone_number: phone_number.trim(),
         password_hash: hashedPassword,
         first_name: first_name.trim(),
         last_name: last_name.trim(),
-        phone_number: phone_number.trim(),
         user_type: userType.toUpperCase(),
-        verificationCode,
-        expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes expiration
-        verificationAttempts: 0
+        verificationCode
       };
-      unverifiedUsers.set(identifier, unverifiedUser);
-      console.log('Stored unverified user with identifier:', identifier);
+      
+      await storeUnverifiedUser(unverifiedUser);
+      console.log('Stored unverified user with email/phone:', unverifiedUser.email || unverifiedUser.phone_number);
 
       // Send verification code
       const smsResult = await sendVerificationCode(phone_number, verificationCode);
@@ -501,16 +548,11 @@ router.post(
         });
       }
 
-      // Find unverified user by identifier (email or phone)
+      // Find unverified user in the database
       console.log('Looking for unverified user with identifier:', identifier);
-      const unverifiedUser = unverifiedUsers.get(identifier);
+      const unverifiedUser = await getUnverifiedUser(identifier);
       console.log('Found unverified user:', unverifiedUser ? 'yes' : 'no');
       
-      if (unverifiedUser) {
-        console.log('Stored verification code:', unverifiedUser.verificationCode);
-        console.log('Provided verification code:', code);
-      }
-
       if (!unverifiedUser) {
         return res.status(400).json({
           success: false,
@@ -518,10 +560,18 @@ router.post(
           requiresResend: true
         });
       }
+      
+      console.log('Stored verification code:', unverifiedUser.verificationCode);
+      console.log('Provided verification code:', code);
 
       // Check if verification code has expired
       if (unverifiedUser.expiresAt < Date.now()) {
-        unverifiedUsers.delete(code);
+        // Clean up expired verification
+        await supabaseAdmin
+          .from('unverified_users')
+          .delete()
+          .or(`email.eq.${identifier},phone_number.eq.${identifier}`);
+          
         return res.status(400).json({
           success: false,
           message: 'Verification code has expired',
@@ -531,7 +581,12 @@ router.post(
 
       // Check verification attempts
       if (unverifiedUser.verificationAttempts >= 3) {
-        unverifiedUsers.delete(code);
+        // Clean up after too many attempts
+        await supabaseAdmin
+          .from('unverified_users')
+          .delete()
+          .or(`email.eq.${identifier},phone_number.eq.${identifier}`);
+          
         return res.status(400).json({
           success: false,
           message: 'Too many attempts. Please request a new code.',
@@ -541,13 +596,21 @@ router.post(
 
       // Verify the code
       if (unverifiedUser.verificationCode !== code) {
-        unverifiedUser.verificationAttempts += 1;
-        unverifiedUsers.set(identifier, unverifiedUser);
+        // Increment verification attempts
+        const { data: userToUpdate } = await supabaseAdmin
+          .from('unverified_users')
+          .select('id')
+          .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
+          .single();
+          
+        if (userToUpdate) {
+          await incrementVerificationAttempts(userToUpdate.id);
+        }
         
         return res.status(400).json({
           success: false,
           message: 'Invalid verification code',
-          attemptsRemaining: 3 - unverifiedUser.verificationAttempts
+          attemptsRemaining: 2 - unverifiedUser.verificationAttempts // Already incremented in the DB
         });
       }
 
@@ -574,8 +637,11 @@ router.post(
         throw createError;
       }
 
-      // Remove from unverified users
-      unverifiedUsers.delete(identifier);
+      // Clean up the verification record
+      await supabaseAdmin
+        .from('unverified_users')
+        .delete()
+        .or(`email.eq.${identifier},phone_number.eq.${identifier}`);
 
       // Generate token
       const token = generateToken(newUser.id);
