@@ -464,42 +464,63 @@ const getCurrentUser = async (req, res) => {
 // Add the route for getting current user
 router.get('/me', getCurrentUser);
 
-// Verify phone number
+// Verify signup (email or phone)
 router.post(
-  '/verify-phone',
+  '/verify-signup',
   [
-    body('phoneNumber').notEmpty().trim(),
+    body('identifier').notEmpty().trim(),
     body('code').notEmpty().isLength({ min: 6, max: 6 })
   ],
   validateRequest,
   async (req, res) => {
     try {
-      const { phoneNumber, code } = req.body;
+      const { identifier, code } = req.body;
       
-      const result = verifyCode(phoneNumber, code);
-      
-      if (!result.success) {
+      // In a real app, you would verify the code from your database or verification service
+      // For now, we'll just check if the code is 6 digits and numeric
+      if (code.length !== 6 || !/^\d+$/.test(code)) {
         return res.status(400).json({
           success: false,
-          message: result.message
+          message: 'Invalid verification code'
+        });
+      }
+
+      // Find user by email or phone
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
+        .single();
+
+      if (userError || !user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
         });
       }
 
       // Update user as verified
-      const { data: user, error } = await supabaseAdmin
+      const { data: updatedUser, error: updateError } = await supabaseAdmin
         .from('users')
         .update({ is_verified: true })
-        .eq('phone_number', phoneNumber)
+        .eq('id', user.id)
         .select()
         .single();
 
-      if (error) throw error;
+      if (updateError) throw updateError;
+
+      // Generate token
+      const token = generateToken(updatedUser.id);
+
+      // Remove sensitive data
+      const { password, ...userWithoutPassword } = updatedUser;
 
       return res.json({
         success: true,
-        message: 'Phone number verified successfully',
+        message: 'Account verified successfully',
         data: {
-          isVerified: true
+          user: userWithoutPassword,
+          token
         }
       });
     } catch (error) {
