@@ -36,97 +36,155 @@ class AuthService {
   static async registerUser(userData) {
     const { email, phone_number, password, first_name, last_name, user_type } = userData;
     
-    // Check if user already exists
-    const { data: existingUser } = await supabaseAdmin
+    // Check if user already exists in either table
+    const { data: existingVerifiedUser } = await supabaseAdmin
       .from('users')
       .select('id')
       .or(`email.eq.${email || ''},phone_number.eq.${phone_number || ''}`)
       .single();
 
-    if (existingUser) {
+    if (existingVerifiedUser) {
       throw new Error('User with this email or phone already exists');
+    }
+
+    // Also check in unverified_users to prevent duplicate signups
+    const { data: existingUnverifiedUser } = await supabaseAdmin
+      .from('unverified_users')
+      .select('id')
+      .or(`email.eq.${email || ''},phone_number.eq.${phone_number || ''}`)
+      .single();
+
+    if (existingUnverifiedUser) {
+      // Delete existing unverified user to replace with new one
+      await supabaseAdmin
+        .from('unverified_users')
+        .delete()
+        .eq('id', existingUnverifiedUser.id);
     }
 
     // Generate verification code
     const verificationCode = this.generateVerificationCode();
+    console.log(`🔑 Generated verification code: ${verificationCode}`);
     
     // Hash password
     const passwordHash = await this.hashPassword(password);
 
-    // Create user with verification code
-    const { data: user, error } = await supabaseAdmin
-      .from('users')
+    // Store in unverified_users table first
+    const userDataToStore = {
+      first_name,
+      last_name,
+      user_type,
+      password_hash: passwordHash
+    };
+
+    const { data: unverifiedUser, error } = await supabaseAdmin
+      .from('unverified_users')
       .insert([{
         email: email || null,
         phone_number: phone_number || null,
-        password_hash: passwordHash,
-        first_name,
-        last_name,
-        user_type,
         verification_code: verificationCode,
-        verification_expires: new Date(Date.now() + VERIFICATION_CODE_EXPIRY_MINUTES * 60 * 1000).toISOString(),
-        is_verified: false,
+        user_data: userDataToStore,
+        verification_attempts: 0,
+        expires_at: new Date(Date.now() + VERIFICATION_CODE_EXPIRY_MINUTES * 60 * 1000).toISOString(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error creating unverified user:', error);
+      throw new Error('Failed to create user account');
+    }
+
+    console.log(`✅ Stored unverified user with ID: ${unverifiedUser.id}`);
 
     // Send verification code via SMS or email
     if (phone_number) {
+      console.log(`📤 Sending verification code to: ${phone_number}`);
       await sendVerificationCode(phone_number, verificationCode);
+    } else if (email) {
+      // TODO: Implement email verification
+      console.log(`📧 Verification code for ${email}: ${verificationCode}`);
     }
 
-    return user;
+    return unverifiedUser;
   }
 
   // Verify user with code
   static async verifyUser(identifier, code) {
-    // Find user by email or phone
-    const { data: user, error } = await supabaseAdmin
-      .from('users')
+    console.log(`🔍 [VERIFY] Looking for unverified user with identifier: ${identifier}`);
+    
+    // First, try to find the unverified user
+    const { data: unverifiedUser, error: unverifiedError } = await supabaseAdmin
+      .from('unverified_users')
       .select('*')
       .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
       .single();
 
-    if (error || !user) {
-      throw new Error('User not found');
+    if (unverifiedError || !unverifiedUser) {
+      console.log('❌ [VERIFY] No unverified user found');
+      throw new Error('Invalid or expired verification request');
     }
 
-    // Check if already verified
-    if (user.is_verified) {
-      throw new Error('User is already verified');
-    }
+    console.log('✅ [VERIFY] Found unverified user:', unverifiedUser.id);
+    console.log(`🔢 [VERIFY] Stored verification code: ${unverifiedUser.verification_code}`);
+    console.log(`🔢 [VERIFY] Provided verification code: ${code}`);
 
-    // Check verification code and expiration
-    if (user.verification_code !== code) {
+    // Check verification code
+    if (unverifiedUser.verification_code !== code) {
+      console.log('❌ [VERIFY] Code mismatch. Incrementing attempts...');
+      
+      // Increment verification attempts
+      await supabaseAdmin
+        .from('unverified_users')
+        .update({ verification_attempts: (unverifiedUser.verification_attempts || 0) + 1 })
+        .eq('id', unverifiedUser.id);
+      
       throw new Error('Invalid verification code');
     }
 
-    if (new Date(user.verification_expires) < new Date()) {
+    // Check if verification code has expired
+    if (new Date(unverifiedUser.expires_at) < new Date()) {
+      console.log('❌ [VERIFY] Verification code has expired');
       throw new Error('Verification code has expired');
     }
 
-    // Mark user as verified
-    const { data: updatedUser, error: updateError } = await supabaseAdmin
+    console.log('✅ [VERIFY] Code verified successfully');
+
+    // Create the user in the main users table
+    const { data: newUser, error: createError } = await supabaseAdmin
       .from('users')
-      .update({
+      .insert([{
+        email: unverifiedUser.email,
+        phone_number: unverifiedUser.phone_number,
+        first_name: unverifiedUser.user_data?.first_name,
+        last_name: unverifiedUser.user_data?.last_name,
+        user_type: unverifiedUser.user_data?.user_type,
+        password_hash: unverifiedUser.user_data?.password_hash,
         is_verified: true,
-        verification_code: null,
-        verification_expires: null,
+        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      })
-      .eq('id', user.id)
+      }])
       .select()
       .single();
 
-    if (updateError) throw updateError;
+    if (createError) {
+      console.error('❌ [VERIFY] Error creating user:', createError);
+      throw new Error('Failed to create user account');
+    }
+
+    console.log('✅ [VERIFY] User created successfully:', newUser.id);
+
+    // Delete the unverified user record
+    await supabaseAdmin
+      .from('unverified_users')
+      .delete()
+      .eq('id', unverifiedUser.id);
 
     // Generate token
-    const token = this.generateToken(updatedUser.id);
-    return { user: updatedUser, token };
+    const token = this.generateToken(newUser.id);
+    return { user: newUser, token };
   }
 
   // Authenticate user
