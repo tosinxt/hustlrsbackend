@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
-import { supabase } from '../services/supabase';
-import { authMiddleware } from '../middleware/auth';
+import { supabase } from '../services/supabase.js';
+import { authMiddleware } from '../middleware/auth.js';
 
 const router = Router();
 const upload = multer({
@@ -16,7 +16,7 @@ const upload = multer({
 router.use(authMiddleware);
 
 // Upload task images
-router.post('/task', upload.array('images', 5), async (req: any, res) => {
+router.post('/task', upload.array('images', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ message: 'No files uploaded' });
@@ -65,7 +65,7 @@ router.post('/task', upload.array('images', 5), async (req: any, res) => {
       message: 'Files uploaded successfully',
       files: uploadedFiles,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while uploading files',
@@ -74,7 +74,7 @@ router.post('/task', upload.array('images', 5), async (req: any, res) => {
 });
 
 // Delete a file from storage
-router.delete('/:bucket/:fileName', async (req: any, res) => {
+router.delete('/:bucket/:fileName', async (req, res) => {
   try {
     const { bucket, fileName } = req.params;
     const userId = req.user.id;
@@ -103,7 +103,7 @@ router.delete('/:bucket/:fileName', async (req: any, res) => {
     if (error) throw error;
 
     res.json({ message: 'File deleted successfully' });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Delete file error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while deleting the file',
@@ -112,7 +112,7 @@ router.delete('/:bucket/:fileName', async (req: any, res) => {
 });
 
 // Get a signed URL for direct uploads
-router.post('/signed-url', async (req: any, res) => {
+router.post('/signed-url', async (req, res) => {
   try {
     const { fileName, contentType, bucket = 'task-images' } = req.body;
     const userId = req.user.id;
@@ -142,7 +142,7 @@ router.post('/signed-url', async (req: any, res) => {
       path: uniqueFileName,
       publicUrl: `${process.env.SUPABASE_URL}/storage/v1/object/public/${bucket}/${uniqueFileName}`,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Generate signed URL error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while generating signed URL',

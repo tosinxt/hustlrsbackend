@@ -1,31 +1,19 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { User as AuthUser } from '@supabase/supabase-js';
-
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        user_type: string;
-      };
-    }
-  }
-}
+import { Router } from 'express';
 import { body, param, query, validationResult } from 'express-validator';
-import { supabase } from '../services/supabase';
-import { authMiddleware, isHustler, isCustomer } from '../middleware/auth';
+import { supabase } from '../services/supabase.js';
+import { authMiddleware, isHustler, isCustomer } from '../middleware/auth.js';
 
-export const router = Router();
+const router = Router();
 
 // Apply auth middleware to all user routes
 router.use(authMiddleware);
 
 // Get current user profile
-router.get('/me', async (req: Request, res: Response) => {
+router.get('/me', async (req, res) => {
   if (!req.user) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
+  
   try {
     const userId = req.user.id;
 
@@ -44,7 +32,7 @@ router.get('/me', async (req: Request, res: Response) => {
     const { password_hash, ...userData } = user;
 
     res.json(userData);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Get user profile error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while fetching your profile',
@@ -70,10 +58,11 @@ router.put(
     body('country').optional().isString(),
     body('avatarUrl').optional().isString(),
   ],
-  async (req: Request, res: Response) => {
+  async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -84,7 +73,7 @@ router.put(
       const updates = { ...req.body };
 
       // Map request body to database fields
-      const mappedUpdates: any = {};
+      const mappedUpdates = {};
       if (updates.firstName) mappedUpdates.first_name = updates.firstName;
       if (updates.lastName) mappedUpdates.last_name = updates.lastName;
       if (updates.email) mappedUpdates.email = updates.email;
@@ -113,7 +102,7 @@ router.put(
       const { password_hash, ...userData } = user;
 
       res.json(userData);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Update profile error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while updating your profile',
@@ -129,10 +118,11 @@ router.put(
     body('currentPassword').isString().notEmpty(),
     body('newPassword').isString().isLength({ min: 6 }),
   ],
-  async (req: Request, res: Response) => {
+  async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -172,7 +162,7 @@ router.put(
       if (updateError) throw updateError;
 
       res.json({ message: 'Password updated successfully' });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Update password error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while updating your password',
@@ -182,65 +172,77 @@ router.put(
 );
 
 // Get user by ID (public profile)
-router.get<{ id: string }>('/:id', [param('id').isUUID()], async (req: Request<{ id: string }>, res: Response) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+router.get(
+  '/:id',
+  [param('id').isUUID()],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { id } = req.params;
+
+      const { data: user, error } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, email, avatar_url, bio, skills, rating, total_rating, tasks_completed, created_at')
+        .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      res.json(user);
+    } catch (error) {
+      console.error('Get user error:', error);
+      res.status(500).json({
+        message: error.message || 'An error occurred while fetching the user',
+      });
     }
-
-    const { id } = req.params;
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, avatar_url, bio, skills, rating, total_rating, tasks_completed, created_at')
-      .eq('id', id)
-      .single();
-
-    if (error) throw error;
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.json(user);
-  } catch (error: any) {
-    console.error('Get user error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred while fetching the user',
-    });
   }
-});
+);
 
 // Get user reviews
-router.get<{ id: string }>('/:id/reviews', [param('id').isUUID()], async (req: Request<{ id: string }>, res: Response) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+router.get(
+  '/:id/reviews',
+  [param('id').isUUID()],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { id } = req.params;
+
+      const { data: reviews, error } = await supabase
+        .from('reviews')
+        .select('*, author:users!reviews_author_id_fkey(id, first_name, last_name, avatar_url)')
+        .eq('target_id', id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      res.json(reviews);
+    } catch (error) {
+      console.error('Get user reviews error:', error);
+      res.status(500).json({
+        message: error.message || 'An error occurred while fetching user reviews',
+      });
     }
-
-    const { id } = req.params;
-
-    const { data: reviews, error } = await supabase
-      .from('reviews')
-      .select('*, author:users!reviews_author_id_fkey(id, first_name, last_name, avatar_url)')
-      .eq('target_id', id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    res.json(reviews);
-  } catch (error: any) {
-    console.error('Get user reviews error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred while fetching user reviews',
-    });
   }
-});
+);
 
 // Upload user avatar
-router.post('/me/avatar', async (req: any, res) => {
+router.post('/me/avatar', async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
     const userId = req.user.id;
     const { file } = req.files || {};
 
@@ -279,7 +281,7 @@ router.post('/me/avatar', async (req: any, res) => {
     const { password_hash, ...userData } = user;
 
     res.json(userData);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Upload avatar error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while uploading your avatar',
@@ -288,10 +290,11 @@ router.post('/me/avatar', async (req: any, res) => {
 });
 
 // Delete user account
-router.delete('/me', async (req: Request, res: Response) => {
+router.delete('/me', async (req, res) => {
   if (!req.user) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
+  
   try {
     const userId = req.user.id;
 
@@ -308,7 +311,7 @@ router.delete('/me', async (req: Request, res: Response) => {
     if (deleteError) throw deleteError;
 
     res.json({ message: 'Account deleted successfully' });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Delete account error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while deleting your account',

@@ -1,89 +1,23 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { body, param, query, validationResult, ValidationChain } from 'express-validator';
-import { supabase } from '../services/supabase';
-import { authMiddleware } from '../middleware/auth';
+import { Router } from 'express';
+import { body, param, query, validationResult } from 'express-validator';
+import { supabase } from '../services/supabase.js';
+import { authMiddleware } from '../middleware/auth.js';
 
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  budget: number;
-  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-  poster_id: string;
-  hustler_id?: string;
-  deadline?: string;
-  latitude?: number;
-  longitude?: number;
-  address?: string;
-  city?: string;
-  state?: string;
-  image_urls?: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-interface User {
-  id: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  avatar_url?: string;
-  rating?: number;
-  user_type: 'CUSTOMER' | 'HUSTLER' | 'BOTH';
-}
-
-// Extend the Express Request type to include our custom properties
-declare global {
-  namespace Express {
-    // This matches the existing user type from the auth middleware
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        user_type: string;
-      };
-    }
-  }
-}
-
-interface TaskRequestBody {
-  title?: string;
-  description?: string;
-  category?: string;
-  budget?: number;
-  status?: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-  hustlerId?: string;
-  deadline?: string;
-  latitude?: number;
-  longitude?: number;
-  address?: string;
-  city?: string;
-  state?: string;
-  imageUrls?: string[];
-}
-
-interface TaskQueryParams {
-  status?: string;
-  category?: string;
-  minBudget?: string;
-  maxBudget?: string;
-  [key: string]: string | undefined;
-}
-
-export const router = Router();
+const router = Router();
 
 // Apply auth middleware to all task routes
 router.use(authMiddleware);
 
 // Get all tasks with optional filters
-router.get<{}, any, any, TaskQueryParams>('/', async (req: Request, res: Response) => {
+router.get('/', async (req, res) => {
   try {
-    const { status, category, minBudget, maxBudget } = req.query as TaskQueryParams;
+    const { status, category, minBudget, maxBudget } = req.query;
     const user = req.user;
+    
     if (!user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     const userId = user.id;
 
     let query = supabase
@@ -109,7 +43,7 @@ router.get<{}, any, any, TaskQueryParams>('/', async (req: Request, res: Respons
     if (error) throw error;
 
     res.json(tasks);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Get tasks error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while fetching tasks',
@@ -118,10 +52,10 @@ router.get<{}, any, any, TaskQueryParams>('/', async (req: Request, res: Respons
 });
 
 // Get a single task by ID
-router.get<{ id: string }>(
+router.get(
   '/:id',
   [param('id').isUUID()],
-  async (req: Request<{ id: string }>, res: Response) => {
+  async (req, res) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -142,7 +76,7 @@ router.get<{ id: string }>(
       }
 
       res.json(task);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Get task error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while fetching the task',
@@ -152,7 +86,7 @@ router.get<{ id: string }>(
 );
 
 // Create a new task
-router.post<{}, any, TaskRequestBody>(
+router.post(
   '/',
   [
     body('title').isString().trim().notEmpty(),
@@ -167,7 +101,7 @@ router.post<{}, any, TaskRequestBody>(
     body('state').optional().isString(),
     body('imageUrls').optional().isArray(),
   ],
-  async (req: Request, res: Response) => {
+  async (req, res) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -178,6 +112,7 @@ router.post<{}, any, TaskRequestBody>(
       if (!user) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
+      
       const userId = user.id;
       const {
         title,
@@ -191,7 +126,7 @@ router.post<{}, any, TaskRequestBody>(
         city,
         state,
         imageUrls = [],
-      } = req.body as TaskRequestBody;
+      } = req.body;
 
       const { data: task, error } = await supabase
         .from('tasks')
@@ -216,7 +151,7 @@ router.post<{}, any, TaskRequestBody>(
       if (error) throw error;
 
       res.status(201).json(task);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Create task error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while creating the task',
@@ -226,7 +161,7 @@ router.post<{}, any, TaskRequestBody>(
 );
 
 // Update a task
-router.put<{ id: string }, any, TaskRequestBody>(
+router.put(
   '/:id',
   [
     param('id').isUUID(),
@@ -235,18 +170,20 @@ router.put<{ id: string }, any, TaskRequestBody>(
     body('status').optional().isIn(['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']),
     body('hustlerId').optional().isUUID(),
   ],
-  async (req: Request<{ id: string }, any, TaskRequestBody>, res: Response) => {
+  async (req, res) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const id = req.params.id as string;
+      const { id } = req.params;
       const user = req.user;
+      
       if (!user) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
+      
       const userId = user.id;
       const updates = { ...req.body };
 
@@ -261,6 +198,7 @@ router.put<{ id: string }, any, TaskRequestBody>(
       if (!existingTask) {
         return res.status(404).json({ message: 'Task not found' });
       }
+      
       if (existingTask.poster_id !== userId) {
         return res.status(403).json({ message: 'Not authorized to update this task' });
       }
@@ -291,7 +229,7 @@ router.put<{ id: string }, any, TaskRequestBody>(
       if (error) throw error;
 
       res.json(task);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Update task error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while updating the task',
@@ -301,10 +239,10 @@ router.put<{ id: string }, any, TaskRequestBody>(
 );
 
 // Delete a task
-router.delete<{ id: string }>(
+router.delete(
   '/:id',
   [param('id').isUUID()],
-  async (req: Request, res: Response) => {
+  async (req, res) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -313,9 +251,11 @@ router.delete<{ id: string }>(
 
       const { id } = req.params;
       const user = req.user;
+      
       if (!user) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
+      
       const userId = user.id;
 
       // Only the task poster can delete the task
@@ -329,6 +269,7 @@ router.delete<{ id: string }>(
       if (!existingTask) {
         return res.status(404).json({ message: 'Task not found' });
       }
+      
       if (existingTask.poster_id !== userId) {
         return res.status(403).json({ message: 'Not authorized to delete this task' });
       }
@@ -339,7 +280,7 @@ router.delete<{ id: string }>(
       if (error) throw error;
 
       res.json({ message: 'Task deleted successfully' });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Delete task error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while deleting the task',
@@ -349,12 +290,13 @@ router.delete<{ id: string }>(
 );
 
 // Get tasks posted by the current user
-router.get('/my/tasks', async (req: Request, res: Response) => {
+router.get('/my/tasks', async (req, res) => {
   try {
     const user = req.user;
     if (!user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     const userId = user.id;
 
     const { data: tasks, error } = await supabase
@@ -366,7 +308,7 @@ router.get('/my/tasks', async (req: Request, res: Response) => {
     if (error) throw error;
 
     res.json(tasks);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Get my tasks error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while fetching your tasks',
@@ -375,12 +317,13 @@ router.get('/my/tasks', async (req: Request, res: Response) => {
 });
 
 // Get tasks assigned to the current user
-router.get('/my/assigned', async (req: Request, res: Response) => {
+router.get('/my/assigned', async (req, res) => {
   try {
     const user = req.user;
     if (!user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     const userId = user.id;
 
     const { data: tasks, error } = await supabase
@@ -392,7 +335,7 @@ router.get('/my/assigned', async (req: Request, res: Response) => {
     if (error) throw error;
 
     res.json(tasks);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Get assigned tasks error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while fetching assigned tasks',

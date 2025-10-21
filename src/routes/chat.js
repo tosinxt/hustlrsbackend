@@ -1,33 +1,20 @@
-import { Router, Request, Response, NextFunction } from 'express';
-
-// Extend the Express Request type to include our custom properties
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        user_type: string;
-      };
-      app: any; // For WebSocket
-    }
-  }
-}
+import { Router } from 'express';
 import { body, param, query, validationResult } from 'express-validator';
-import { supabase } from '../services/supabase';
-import { authMiddleware } from '../middleware/auth';
+import { supabase } from '../services/supabase.js';
+import { authMiddleware } from '../middleware/auth.js';
 
-export const router = Router();
+const router = Router();
 
 // Apply auth middleware to all chat routes
 router.use(authMiddleware);
 
 // Get all chats for the current user
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     const userId = req.user.id;
 
     // Get all chats where the user is a member
@@ -39,7 +26,7 @@ router.get('/', async (req: Request, res: Response) => {
     if (error) throw error;
 
     // Format the response
-    const formattedChats = chats.map((chatMember: any) => ({
+    const formattedChats = chats.map(chatMember => ({
       id: chatMember.chat.id,
       task: chatMember.chat.task,
       createdAt: chatMember.chat.created_at,
@@ -47,7 +34,7 @@ router.get('/', async (req: Request, res: Response) => {
     }));
 
     res.json(formattedChats);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Get chats error:', error);
     res.status(500).json({
       message: error.message || 'An error occurred while fetching chats',
@@ -56,68 +43,70 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // Get a single chat with messages
-router.get<{ chatId: string }>(
+router.get(
   '/:chatId',
   [param('chatId').isUUID()],
-  async (req: Request<{ chatId: string }>, res: Response) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { chatId } = req.params;
+      if (!req.user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
+      const userId = req.user.id;
+
+      // Verify the user is a member of this chat
+      const { data: chatMember, error: memberError } = await supabase
+        .from('chat_members')
+        .select('chat_id')
+        .eq('chat_id', chatId)
+        .eq('user_id', userId)
+        .single();
+
+      if (memberError || !chatMember) {
+        return res.status(403).json({ message: 'Not authorized to view this chat' });
+      }
+
+      // Get chat details with messages
+      const { data: chat, error: chatError } = await supabase
+        .from('chats')
+        .select(`
+          *,
+          task:tasks(*, poster:users(*)),
+          messages:messages(*, sender:users(id, first_name, last_name, avatar_url))
+        `)
+        .eq('id', chatId)
+        .single();
+
+      if (chatError) throw chatError;
+      if (!chat) {
+        return res.status(404).json({ message: 'Chat not found' });
+      }
+
+      res.json(chat);
+    } catch (error) {
+      console.error('Get chat error:', error);
+      res.status(500).json({
+        message: error.message || 'An error occurred while fetching the chat',
+      });
     }
-
-    const { chatId } = req.params;
-    if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-    const userId = req.user.id;
-
-    // Verify the user is a member of this chat
-    const { data: chatMember, error: memberError } = await supabase
-      .from('chat_members')
-      .select('chat_id')
-      .eq('chat_id', chatId)
-      .eq('user_id', userId)
-      .single();
-
-    if (memberError || !chatMember) {
-      return res.status(403).json({ message: 'Not authorized to view this chat' });
-    }
-
-    // Get chat details with messages
-    const { data: chat, error: chatError } = await supabase
-      .from('chats')
-      .select(`
-        *,
-        task:tasks(*, poster:users(*)),
-        messages:messages(*, sender:users(id, first_name, last_name, avatar_url))
-      `)
-      .eq('id', chatId)
-      .single();
-
-    if (chatError) throw chatError;
-    if (!chat) {
-      return res.status(404).json({ message: 'Chat not found' });
-    }
-
-    res.json(chat);
-  } catch (error: any) {
-    console.error('Get chat error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred while fetching the chat',
-    });
   }
-});
+);
 
 // Send a message in a chat
-router.post<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' | 'SYSTEM' }>(
+router.post(
   '/:chatId/messages',
   [
     param('chatId').isUUID(),
     body('content').isString().trim().notEmpty(),
     body('type').optional().isIn(['TEXT', 'IMAGE', 'SYSTEM']).default('TEXT'),
   ],
-  async (req: Request<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' | 'SYSTEM' }>, res: Response) => {
+  async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
@@ -129,7 +118,7 @@ router.post<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' 
       }
 
       const { chatId } = req.params;
-      const { content, type } = req.body;
+      const { content, type = 'TEXT' } = req.body;
       const userId = req.user.id;
 
       // Verify the user is a member of this chat
@@ -168,7 +157,7 @@ router.post<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' 
       req.app.get('io').to(`chat_${chatId}`).emit('new_message', message);
 
       res.status(201).json(message);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Send message error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while sending the message',
@@ -178,14 +167,14 @@ router.post<{ chatId: string }, any, { content: string; type?: 'TEXT' | 'IMAGE' 
 );
 
 // Get chat messages with pagination
-router.get<{ chatId: string }, any, any, { limit?: string; offset?: string }>(
+router.get(
   '/:chatId/messages',
   [
     param('chatId').isUUID(),
     query('limit').optional().isInt({ min: 1, max: 100 }).default(50),
     query('offset').optional().isInt({ min: 0 }).default(0),
   ],
-  async (req: Request<{ chatId: string }, any, any, { limit?: string; offset?: string }>, res: Response) => {
+  async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
@@ -225,7 +214,7 @@ router.get<{ chatId: string }, any, any, { limit?: string; offset?: string }>(
       if (messagesError) throw messagesError;
 
       res.json(messages.reverse()); // Return oldest first
-    } catch (error: any) {
+    } catch (error) {
       console.error('Get messages error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while fetching messages',
@@ -235,13 +224,14 @@ router.get<{ chatId: string }, any, any, { limit?: string; offset?: string }>(
 );
 
 // Mark messages as read
-router.post<{ chatId: string }>(
+router.post(
   '/:chatId/messages/read',
   [param('chatId').isUUID()],
-  async (req: Request<{ chatId: string }>, res: Response) => {
+  async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -261,7 +251,7 @@ router.post<{ chatId: string }>(
       if (updateError) throw updateError;
 
       res.json({ success: true });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Mark messages as read error:', error);
       res.status(500).json({
         message: error.message || 'An error occurred while marking messages as read',

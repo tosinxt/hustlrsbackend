@@ -1,19 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
-
-interface AppError extends Error {
-  statusCode?: number;
-  code?: string | number;
-  errors?: any[];
-  details?: any;
-  detail?: string;
-}
-
-export const errorHandler = (
-  err: AppError,
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const errorHandler = (err, req, res, next) => {
   console.error('Error:', {
     message: err.message,
     stack: process.env.NODE_ENV === 'development' ? err.stack : {},
@@ -37,14 +22,14 @@ export const errorHandler = (
     
     // Format Joi validation errors
     if (err.details && Array.isArray(err.details)) {
-      errors = (err.details as any[]).map((detail: any) => ({
+      errors = err.details.map((detail) => ({
         field: Array.isArray(detail.path) ? detail.path.join('.') : detail.path,
         message: detail.message,
       }));
     }
     // Format express-validator errors
     else if (Array.isArray(err)) {
-      errors = err.map((e: any) => ({
+      errors = err.map((e) => ({
         field: e.param,
         message: e.msg,
       }));
@@ -55,23 +40,29 @@ export const errorHandler = (
   } else if (err.name === 'TokenExpiredError') {
     statusCode = 401;
     message = 'Token expired';
-  } else if (err.code === '23505') {
-    // PostgreSQL unique violation
+  } else if (err.code === '23505') { // PostgreSQL unique violation
     statusCode = 409;
-    message = 'Duplicate key error';
-    const fieldMatch = typeof err.detail === 'string' ? err.detail.match(/\(([^)]+)\)=/)?.[1] : undefined;
+    message = 'Duplicate entry';
     errors = [{
-      message: 'A record with this value already exists',
-      field: fieldMatch,
+      field: err.detail ? err.detail.match(/Key \(([^)]+)\)=/)[1] : '',
+      message: 'This value already exists',
     }];
-  } else if (err.code === '23503') {
-    // Foreign key violation
+  } else if (err.code === '23503') { // PostgreSQL foreign key violation
     statusCode = 400;
-    message = 'Reference error';
+    message = 'Invalid reference';
     errors = [{
-      message: 'Invalid reference',
-      detail: typeof err.detail === 'string' ? err.detail : 'Reference error occurred',
+      field: err.detail ? err.detail.match(/Key \(([^)]+)\)=/)[1] : '',
+      message: 'Referenced record does not exist',
     }];
+  } else if (err.code === '22P02') { // PostgreSQL invalid text representation
+    statusCode = 400;
+    message = 'Invalid input syntax';
+  }
+
+  // Handle Prisma errors
+  if (err.code && err.code.startsWith('P2')) {
+    statusCode = 400;
+    message = 'Database error';
   }
 
   // Send error response
@@ -84,8 +75,8 @@ export const errorHandler = (
 };
 
 // 404 Not Found handler
-export const notFound = (req: Request, res: Response, next: NextFunction) => {
-  const error = new Error(`Not Found - ${req.originalUrl}`) as AppError;
-  error.statusCode = 404;
+export const notFound = (req, res, next) => {
+  const error = new Error(`Not Found - ${req.originalUrl}`);
+  res.status(404);
   next(error);
 };

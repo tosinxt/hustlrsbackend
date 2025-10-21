@@ -28,11 +28,8 @@ export const supabaseAdmin = createClient(
   }
 );
 
-// Re-export Supabase types for convenience
-export type { User } from '@supabase/supabase-js';
-
 // Helper function to handle Supabase errors
-const handleError = (error: any) => {
+const handleError = (error) => {
   console.error('Supabase error:', error);
   throw new Error(error.message || 'An error occurred');
 };
@@ -40,7 +37,7 @@ const handleError = (error: any) => {
 // User operations
 export const userService = {
   // Get user profile
-  getProfile: async (userId: string) => {
+  getProfile: async (userId) => {
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -52,7 +49,7 @@ export const userService = {
   },
 
   // Update user profile
-  updateProfile: async (userId: string, updates: any) => {
+  updateProfile: async (userId, updates) => {
     const { data, error } = await supabase
       .from('users')
       .update(updates)
@@ -68,7 +65,7 @@ export const userService = {
 // Task operations
 export const taskService = {
   // Create a new task
-  createTask: async (taskData: any) => {
+  createTask: async (taskData) => {
     const { data, error } = await supabase
       .from('tasks')
       .insert(taskData)
@@ -80,25 +77,23 @@ export const taskService = {
   },
 
   // Get tasks with filters
-  getTasks: async (filters: any = {}) => {
-    let query = supabase
-      .from('tasks')
-      .select('*');
+  getTasks: async (filters = {}) => {
+    let query = supabase.from('tasks').select('*');
     
     // Apply filters
     Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined) {
+      if (value !== undefined && value !== null) {
         query = query.eq(key, value);
       }
     });
     
     const { data, error } = await query;
     if (error) handleError(error);
-    return data;
+    return data || [];
   },
 
   // Update a task
-  updateTask: async (taskId: string, updates: any) => {
+  updateTask: async (taskId, updates) => {
     const { data, error } = await supabase
       .from('tasks')
       .update(updates)
@@ -114,35 +109,36 @@ export const taskService = {
 // Chat operations
 export const chatService = {
   // Create or get chat for a task
-  getOrCreateChat: async (taskId: string, userId: string) => {
-    // First try to get existing chat
-    const { data: existingChat } = await supabase
+  getOrCreateChat: async (taskId, userId) => {
+    // Check if chat already exists
+    const { data: existingChat, error: findError } = await supabase
       .from('chats')
       .select('*')
       .eq('task_id', taskId)
       .single();
-    
+
+    if (findError && findError.code !== 'PGRST116') { // PGRST116 = not found
+      handleError(findError);
+    }
+
     if (existingChat) return existingChat;
-    
-    // Create new chat if it doesn't exist
-    const { data: newChat, error } = await supabase
+
+    // Create new chat if not exists
+    const { data: newChat, error: createError } = await supabase
       .from('chats')
-      .insert({ task_id: taskId })
+      .insert({
+        task_id: taskId,
+        created_by: userId,
+      })
       .select()
       .single();
-    
-    if (error) handleError(error);
-    
-    // Add task poster to chat
-    await supabase
-      .from('chat_members')
-      .insert({ chat_id: newChat.id, user_id: userId });
-    
+
+    if (createError) handleError(createError);
     return newChat;
   },
 
   // Send message
-  sendMessage: async (chatId: string, senderId: string, content: string, type = 'TEXT') => {
+  sendMessage: async (chatId, senderId, content, type = 'TEXT') => {
     const { data, error } = await supabase
       .from('messages')
       .insert({
@@ -159,7 +155,7 @@ export const chatService = {
   },
 
   // Get messages for a chat
-  getMessages: async (chatId: string) => {
+  getMessages: async (chatId) => {
     const { data, error } = await supabase
       .from('messages')
       .select('*')
@@ -167,83 +163,83 @@ export const chatService = {
       .order('created_at', { ascending: true });
     
     if (error) handleError(error);
-    return data;
+    return data || [];
   },
 };
 
 // Review operations
 export const reviewService = {
   // Create a review
-  createReview: async (reviewData: any) => {
+  createReview: async (reviewData) => {
     const { data, error } = await supabase
       .from('reviews')
-      .insert(reviewData)
+      .insert({
+        task_id: reviewData.taskId,
+        reviewer_id: reviewData.reviewerId,
+        reviewee_id: reviewData.revieweeId,
+        rating: reviewData.rating,
+        comment: reviewData.comment,
+      })
       .select()
       .single();
     
     if (error) handleError(error);
-    
-    // Update user's rating
-    await supabase.rpc('update_user_rating', {
-      user_id: reviewData.target_id,
-    });
-    
     return data;
   },
 
   // Get reviews for a user
-  getUserReviews: async (userId: string) => {
+  getUserReviews: async (userId) => {
     const { data, error } = await supabase
       .from('reviews')
-      .select('*, author:users!reviews_author_id_fkey(*)')
-      .eq('target_id', userId);
+      .select('*')
+      .eq('reviewee_id', userId);
     
     if (error) handleError(error);
-    return data;
+    return data || [];
   },
 };
 
 // Real-time subscriptions
 export const realtimeService = {
   // Subscribe to task updates
-  subscribeToTask: (taskId: string, callback: (payload: any) => void) => {
-    return supabase
-      .channel('task-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tasks',
-          filter: `id=eq.${taskId}`,
-        },
-        (payload) => callback(payload)
-      )
+  subscribeToTask: (taskId, callback) => {
+    const subscription = supabase
+      .channel(`task:${taskId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'tasks',
+        filter: `id=eq.${taskId}`,
+      }, callback)
       .subscribe();
+    
+    return () => {
+      subscription.unsubscribe();
+    };
   },
 
   // Subscribe to chat messages
-  subscribeToChat: (chatId: string, callback: (payload: any) => void) => {
-    return supabase
-      .channel('chat-messages')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `chat_id=eq.${chatId}`,
-        },
-        (payload) => callback(payload)
-      )
+  subscribeToChat: (chatId, callback) => {
+    const subscription = supabase
+      .channel(`chat:${chatId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `chat_id=eq.${chatId}`,
+      }, callback)
       .subscribe();
+    
+    return () => {
+      subscription.unsubscribe();
+    };
   },
 };
 
 // Storage operations
 export const storageService = {
   // Upload file to storage
-  uploadFile: async (bucket: string, path: string, file: File | Blob) => {
+  uploadFile: async (bucket, path, file) => {
     const { data, error } = await supabase.storage
       .from(bucket)
       .upload(path, file);
@@ -253,7 +249,7 @@ export const storageService = {
   },
 
   // Get public URL for a file
-  getPublicUrl: (bucket: string, path: string) => {
+  getPublicUrl: (bucket, path) => {
     const { data } = supabase.storage
       .from(bucket)
       .getPublicUrl(path);
@@ -262,18 +258,20 @@ export const storageService = {
   },
 
   // Delete a file
-  deleteFile: async (bucket: string, path: string) => {
+  deleteFile: async (bucket, path) => {
     const { error } = await supabase.storage
       .from(bucket)
       .remove([path]);
     
     if (error) handleError(error);
+    return true;
   },
 };
 
 // Export all services for easy importing
 export default {
   supabase,
+  supabaseAdmin,
   userService,
   taskService,
   chatService,
