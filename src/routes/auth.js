@@ -508,4 +508,4 @@ router.post('/signup', (req, res, next) => {
   next();
 }, router);
 
-module.exports = router;
+export default router;
