@@ -165,14 +165,11 @@ router.post(
         });
       }
 
-      // Check if there's already an unverified user with this email/phone
-      for (const [_, user] of unverifiedUsers.entries()) {
-        if (user.email === email || user.phone_number === phone_number) {
-          // Remove old unverified user if exists
-          unverifiedUsers.delete(user.verificationCode);
-          break;
-        }
-      }
+      // Delete any existing unverified user with the same email or phone
+      await supabaseAdmin
+        .from('unverified_users')
+        .delete()
+        .or(`email.eq.${email},phone_number.eq.${phone_number}`);
 
       // Generate verification code
       const verificationCode = generateVerificationCode();
