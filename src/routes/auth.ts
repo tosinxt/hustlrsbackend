@@ -44,6 +44,14 @@ const generateToken = (userId: string) => {
   );
 };
 
+// Alias /signup to /register for frontend compatibility
+router.post('/signup', (req, res, next) => {
+  // Forward to the register handler
+  req.url = '/register';
+  req.originalUrl = '/register';
+  next();
+});
+
 // Register a new user
 router.post(
   '/register',
