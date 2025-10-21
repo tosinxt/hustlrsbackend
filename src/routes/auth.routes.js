@@ -1,7 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const AuthService = require('../services/authService');
-const { sendVerificationCode } = require('../services/smsService');
 const router = express.Router();
 
 // Input validation middleware
@@ -31,64 +30,18 @@ router.post(
   validateRequest,
   async (req, res) => {
     try {
-      const { email, phone_number, password, first_name, last_name, user_type } = req.body;
-
-      // Check if email or phone is provided
-      if (!email && !phone_number) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email or phone number is required'
-        });
-      }
-
-      // Check if user already exists
-      const { data: existingUser } = await supabaseAdmin
-        .from('users')
-        .select('id')
-        .or(`email.eq.${email || ''},phone_number.eq.${phone_number || ''}`)
-        .single();
-
-      if (existingUser) {
-        return res.status(400).json({
-          success: false,
-          message: 'User with this email or phone already exists'
-        });
-      }
-
-      // Generate verification code
-      const verificationCode = AuthService.generateVerificationCode();
+      const user = await AuthService.registerUser(req.body);
       
-      // Hash password
-      const passwordHash = await AuthService.hashPassword(password);
-
-      // Store unverified user
-      await AuthService.storeUnverifiedUser({
-        email,
-        phone_number,
-        first_name,
-        last_name,
-        user_type,
-        password_hash: passwordHash,
-        verificationCode
-      });
-
-      // Send verification code via SMS or email
-      if (phone_number) {
-        await sendVerificationCode(phone_number, verificationCode);
-      }
-      // TODO: Add email verification logic
-
       res.status(200).json({
         success: true,
         message: 'Verification code sent',
-        identifier: email || phone_number
+        identifier: user.email || user.phone_number
       });
     } catch (error) {
       console.error('Registration error:', error);
-      res.status(500).json({
+      res.status(400).json({
         success: false,
-        message: 'Registration failed',
-        error: error.message
+        message: error.message || 'Registration failed'
       });
     }
   }
@@ -105,9 +58,7 @@ router.post(
   async (req, res) => {
     try {
       const { identifier, code } = req.body;
-      
-      const user = await AuthService.verifyAndCreateUser(identifier, code);
-      const token = AuthService.generateToken(user.id);
+      const { user, token } = await AuthService.verifyUser(identifier, code);
 
       res.status(200).json({
         success: true,
@@ -136,24 +87,13 @@ router.post(
   async (req, res) => {
     try {
       const { identifier, password } = req.body;
-      
-      // First try to authenticate
-      const result = await AuthService.authenticate(identifier, password);
-      
-      if (result.requiresOTP) {
-        return res.status(200).json({
-          success: true,
-          requiresOTP: true,
-          message: 'Verification code sent',
-          identifier
-        });
-      }
+      const { user, token } = await AuthService.authenticate(identifier, password);
       
       res.status(200).json({
         success: true,
         message: 'Login successful',
-        user: result.user,
-        token: result.token
+        user,
+        token
       });
     } catch (error) {
       console.error('Login error:', error);
@@ -165,30 +105,27 @@ router.post(
   }
 );
 
-// Verify OTP for login
+// Resend verification code
 router.post(
-  '/verify-otp',
+  '/resend-code',
   [
-    body('identifier').notEmpty(),
-    body('code').isLength({ min: 6, max: 6 })
+    body('identifier').notEmpty()
   ],
   validateRequest,
   async (req, res) => {
     try {
-      const { identifier, code } = req.body;
-      const result = await AuthService.verifyLoginOTP(identifier, code);
+      const { identifier } = req.body;
+      await AuthService.resendVerificationCode(identifier);
       
       res.status(200).json({
         success: true,
-        message: 'Login successful',
-        user: result.user,
-        token: result.token
+        message: 'Verification code resent successfully'
       });
     } catch (error) {
-      console.error('OTP verification error:', error);
+      console.error('Resend code error:', error);
       res.status(400).json({
         success: false,
-        message: error.message || 'Verification failed'
+        message: error.message || 'Failed to resend verification code'
       });
     }
   }
