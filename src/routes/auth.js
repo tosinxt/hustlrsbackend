@@ -56,7 +56,7 @@ const validateRequest = (req, res, next) => {
 };
 
 // In-memory store for unverified users (in production, use Redis or similar)
-const unverifiedUsers = new Map();
+const unverifiedUsers = new Map(); // Maps identifier (email/phone) to user data
 
 // Register new user (creates unverified account)
 router.post(
@@ -129,7 +129,8 @@ router.post(
       const verificationCode = generateVerificationCode();
       const hashedPassword = await hashPassword(password);
 
-      // Store user data temporarily (in production, use Redis with expiration)
+      // Store user data temporarily using email/phone as key
+      const identifier = email.toLowerCase().trim() || phone_number.trim();
       const unverifiedUser = {
         email: email.toLowerCase().trim(),
         password_hash: hashedPassword,
@@ -141,8 +142,8 @@ router.post(
         expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes expiration
         verificationAttempts: 0
       };
-
-      unverifiedUsers.set(verificationCode, unverifiedUser);
+      unverifiedUsers.set(identifier, unverifiedUser);
+      console.log('Stored unverified user with identifier:', identifier);
 
       // Send verification code
       const smsResult = await sendVerificationCode(phone_number, verificationCode);
@@ -465,7 +466,7 @@ router.get('/me', getCurrentUser);
 
 // Verify signup and create user
 router.post(
-  '/verify-signup',
+  '/signup/verify',
   [
     body('identifier').notEmpty().trim().withMessage('Identifier is required'),
     body('code').notEmpty().withMessage('Verification code is required')
@@ -500,14 +501,14 @@ router.post(
         });
       }
 
-      // Find unverified user by code
-      let unverifiedUser = null;
-      for (const [storedCode, user] of unverifiedUsers.entries()) {
-        if (storedCode === code && 
-            (user.email === identifier || user.phone_number === identifier)) {
-          unverifiedUser = user;
-          break;
-        }
+      // Find unverified user by identifier (email or phone)
+      console.log('Looking for unverified user with identifier:', identifier);
+      const unverifiedUser = unverifiedUsers.get(identifier);
+      console.log('Found unverified user:', unverifiedUser ? 'yes' : 'no');
+      
+      if (unverifiedUser) {
+        console.log('Stored verification code:', unverifiedUser.verificationCode);
+        console.log('Provided verification code:', code);
       }
 
       if (!unverifiedUser) {
@@ -541,7 +542,7 @@ router.post(
       // Verify the code
       if (unverifiedUser.verificationCode !== code) {
         unverifiedUser.verificationAttempts += 1;
-        unverifiedUsers.set(code, unverifiedUser);
+        unverifiedUsers.set(identifier, unverifiedUser);
         
         return res.status(400).json({
           success: false,
@@ -574,7 +575,7 @@ router.post(
       }
 
       // Remove from unverified users
-      unverifiedUsers.delete(code);
+      unverifiedUsers.delete(identifier);
 
       // Generate token
       const token = generateToken(newUser.id);
