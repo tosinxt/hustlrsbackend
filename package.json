@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "scripts": {
     "start": "ts-node src/server.ts",
-    "dev": "ts-node-dev --respawn src/server.ts",
+    "dev": "NODE_OPTIONS='--max-old-space-size=4096' ts-node-dev --respawn src/server.ts",
     "test": "jest",
     "migrate": "npx prisma migrate dev",
     "generate": "npx prisma generate",

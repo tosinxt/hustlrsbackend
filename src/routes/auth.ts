@@ -158,31 +158,40 @@ router.post(
             phone_number: phoneNumber,
             user_type: userType,
           },
+          emailRedirectTo: `${process.env.FRONTEND_URL}/auth/confirm`,
         },
       });
 
       if (signUpError) {
-        throw signUpError;
+        console.error('Supabase signup error:', signUpError);
+        throw new Error('Failed to create user account');
+      }
+
+      if (!authData.user) {
+        throw new Error('No user data returned from auth provider');
       }
 
       // Create user profile in the database
       const { data: user, error: profileError } = await supabase
         .from('users')
         .insert({
-          id: authData.user?.id,
+          id: authData.user.id,
           email,
           first_name: firstName,
           last_name: lastName,
           phone_number: phoneNumber,
           user_type: userType,
+          password_hash: 'oauth2-signup', // This will be updated on first login
+          is_verified: false,
         })
         .select()
         .single();
 
       if (profileError) {
+        console.error('Profile creation error:', profileError);
         // Clean up auth user if profile creation fails
-        await supabase.auth.admin.deleteUser(authData.user?.id || '');
-        throw profileError;
+        await supabase.auth.admin.deleteUser(authData.user.id);
+        throw new Error('Failed to create user profile');
       }
 
       // Generate JWT token
@@ -435,7 +444,7 @@ router.post(
         return res.status(401).json({ message: 'No token provided' });
       }
 
-      // Get current user
+      // Set the auth token for this request
       const { data: { user }, error: userError } = await supabase.auth.getUser(token);
       
       if (userError || !user) {
@@ -447,6 +456,7 @@ router.post(
         return res.status(400).json({ message: 'User email not found' });
       }
 
+      // Sign in with current password to verify
       const { data: { session }, error: authError } = await supabase.auth.signInWithPassword({
         email: user.email,
         password: currentPassword,
