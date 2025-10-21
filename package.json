@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "scripts": {
     "start": "ts-node src/server.ts",
-    "dev": "NODE_OPTIONS='--max-old-space-size=4096' ts-node-dev --respawn src/server.ts",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 ts-node-dev --respawn src/server.ts",
     "test": "jest",
     "migrate": "npx prisma migrate dev",
     "generate": "npx prisma generate",
@@ -43,6 +43,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
