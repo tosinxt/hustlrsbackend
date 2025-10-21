@@ -12,7 +12,9 @@ import { supabase } from './services/supabase';
 // Import routes
 import authRouter from './routes/auth';
 import taskRouter from './routes/tasks';
-// Import other route files as they're converted to TypeScript
+import userRouter from './routes/users';
+import chatRouter from './routes/chat';
+import uploadRouter from './routes/upload';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -73,7 +75,9 @@ app.get('/health', (req: Request, res: Response) => {
 // API Routes
 app.use('/api/auth', authRouter);
 app.use('/api/tasks', authMiddleware, taskRouter);
-// Add other routes as they're converted to TypeScript
+app.use('/api/users', authMiddleware, userRouter);
+app.use('/api/chats', authMiddleware, chatRouter);
+app.use('/api/upload', authMiddleware, uploadRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
