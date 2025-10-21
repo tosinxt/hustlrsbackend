@@ -546,11 +546,12 @@ router.post(
       }
 
       // Find unverified user in the database
-      console.log('Looking for unverified user with identifier:', identifier);
+      console.log('🔍 [VERIFY] Looking for unverified user with identifier:', identifier);
       const unverifiedUser = await getUnverifiedUser(identifier);
-      console.log('Found unverified user:', unverifiedUser ? 'yes' : 'no');
+      console.log('🔍 [VERIFY] Found unverified user:', unverifiedUser ? '✅' : '❌ Not found');
       
       if (!unverifiedUser) {
+        console.log('❌ [VERIFY] No unverified user found for identifier:', identifier);
         return res.status(400).json({
           success: false,
           message: 'Invalid verification code or identifier',
@@ -558,8 +559,9 @@ router.post(
         });
       }
       
-      console.log('Stored verification code:', unverifiedUser.verificationCode);
-      console.log('Provided verification code:', code);
+      console.log('🔢 [VERIFY] Stored verification code:', unverifiedUser.verificationCode);
+      console.log('🔢 [VERIFY] Provided verification code:', code);
+      console.log('🔄 [VERIFY] Code match:', unverifiedUser.verificationCode === code ? '✅' : '❌');
 
       // Check if verification code has expired
       if (unverifiedUser.expiresAt < Date.now()) {
@@ -592,7 +594,9 @@ router.post(
       }
 
       // Verify the code
+      console.log('🔍 [VERIFY] Verifying code...');
       if (unverifiedUser.verificationCode !== code) {
+        console.log('❌ [VERIFY] Code mismatch. Incrementing attempts...');
         // Increment verification attempts
         const { data: userToUpdate } = await supabaseAdmin
           .from('unverified_users')
@@ -612,20 +616,23 @@ router.post(
       }
 
       // Create the user in the database
+      console.log('👤 [VERIFY] Creating user in database...');
+      const userData = {
+        email: unverifiedUser.email,
+        password_hash: unverifiedUser.password_hash,
+        first_name: unverifiedUser.first_name,
+        last_name: unverifiedUser.last_name,
+        phone_number: unverifiedUser.phone_number,
+        user_type: unverifiedUser.user_type,
+        is_verified: true,
+        is_active: true
+      };
+      
+      console.log('📝 [VERIFY] User data:', JSON.stringify(userData, null, 2));
+      
       const { data: newUser, error: createError } = await supabaseAdmin
         .from('users')
-        .insert([
-          {
-            email: unverifiedUser.email,
-            password_hash: unverifiedUser.password_hash,
-            first_name: unverifiedUser.first_name,
-            last_name: unverifiedUser.last_name,
-            phone_number: unverifiedUser.phone_number,
-            user_type: unverifiedUser.user_type,
-            is_verified: true,
-            is_active: true
-          }
-        ])
+        .insert([userData])
         .select()
         .single();
 
