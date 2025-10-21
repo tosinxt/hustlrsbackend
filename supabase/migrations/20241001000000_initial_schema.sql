@@ -216,3 +216,38 @@ create trigger on_auth_user_created
 alter publication supabase_realtime add table public.tasks;
 alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.notifications;
+
+ALTER TABLE public.users ALTER COLUMN password_hash DROP NOT NULL;
+
+
+create table public.unverified_users (
+  id uuid default gen_random_uuid() primary key,
+  email text,
+  phone_number text,
+  verification_code text not null,
+  user_data jsonb not null,
+  verification_attempts integer default 0,
+  expires_at timestamptz not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Add indexes for faster lookups
+create index idx_unverified_users_email on public.unverified_users (email) where email is not null;
+create index idx_unverified_users_phone on public.unverified_users (phone_number) where phone_number is not null;
+create index idx_unverified_users_expires on public.unverified_users (expires_at);
+
+-- Add row-level security if needed
+alter table public.unverified_users enable row level security;
+
+-- Create a function to increment verification attempts
+create or replace function public.increment_verification_attempts(user_id uuid)
+returns void as $$
+begin
+  update public.unverified_users
+  set 
+    verification_attempts = verification_attempts + 1,
+    updated_at = now()
+  where id = user_id;
+end;
+$$ language plpgsql security definer;

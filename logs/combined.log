@@ -1,0 +1,12 @@
+2025-10-21 22:41:49 [[31merror[39m]: Uncaught Exception: supabaseKey is required.
+{
+  "stack": "Error: supabaseKey is required.\n    at new SupabaseClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\SupabaseClient.js:36:19)\n    at createClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\index.js:38:12)\n    at file:///C:/Users/victo/Documents/Nadiron%20Technologies/hustlrsbackend/src/middleware/auth.js:7:18\n    at ModuleJob.run (node:internal/modules/esm/module_job:271:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:578:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)"
+}
+2025-10-21 22:41:53 [[31merror[39m]: Uncaught Exception: supabaseKey is required.
+{
+  "stack": "Error: supabaseKey is required.\n    at new SupabaseClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\SupabaseClient.js:36:19)\n    at createClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\index.js:38:12)\n    at file:///C:/Users/victo/Documents/Nadiron%20Technologies/hustlrsbackend/src/middleware/auth.js:7:18\n    at ModuleJob.run (node:internal/modules/esm/module_job:271:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:578:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)"
+}
+2025-10-21 22:43:26 [[31merror[39m]: Uncaught Exception: supabaseKey is required.
+{
+  "stack": "Error: supabaseKey is required.\n    at new SupabaseClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\SupabaseClient.js:36:19)\n    at createClient (C:\\Users\\victo\\Documents\\Nadiron Technologies\\hustlrsbackend\\node_modules\\@supabase\\supabase-js\\dist\\main\\index.js:38:12)\n    at file:///C:/Users/victo/Documents/Nadiron%20Technologies/hustlrsbackend/src/middleware/auth.js:7:18\n    at ModuleJob.run (node:internal/modules/esm/module_job:271:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:578:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)"
+}
