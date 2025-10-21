@@ -83,20 +83,48 @@ const storeUnverifiedUser = async (userData) => {
 };
 
 const getUnverifiedUser = async (identifier) => {
-  const { data, error } = await supabaseAdmin
-    .from('unverified_users')
-    .select('*')
-    .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
-    .single();
+  try {
+    console.log('🔍 [GET_UNVERIFIED_USER] Looking for user with identifier:', identifier);
     
-  if (error || !data) return null;
-  
-  return {
-    ...data.user_data,
-    verificationCode: data.verification_code,
-    verificationAttempts: data.verification_attempts,
-    expiresAt: new Date(data.expires_at).getTime()
-  };
+    const { data, error } = await supabaseAdmin
+      .from('unverified_users')
+      .select('*')
+      .or(`email.eq.${identifier},phone_number.eq.${identifier}`)
+      .single();
+      
+    if (error) {
+      console.error('❌ [GET_UNVERIFIED_USER] Error fetching user:', error);
+      return null;
+    }
+    
+    if (!data) {
+      console.log('❌ [GET_UNVERIFIED_USER] No user found with identifier:', identifier);
+      return null;
+    }
+    
+    console.log('✅ [GET_UNVERIFIED_USER] Found user data:', JSON.stringify(data, null, 2));
+    
+    // Ensure we have the required fields
+    if (!data.user_data || !data.verification_code) {
+      console.error('❌ [GET_UNVERIFIED_USER] Incomplete user data:', data);
+      return null;
+    }
+    
+    const user = {
+      ...data.user_data,
+      phone_number: data.phone_number || data.user_data.phone_number, // Ensure phone_number is included
+      verificationCode: data.verification_code,
+      verificationAttempts: data.verification_attempts || 0,
+      expiresAt: new Date(data.expires_at).getTime()
+    };
+    
+    console.log('🔄 [GET_UNVERIFIED_USER] Returning user:', JSON.stringify(user, null, 2));
+    return user;
+    
+  } catch (error) {
+    console.error('❌ [GET_UNVERIFIED_USER] Unexpected error:', error);
+    return null;
+  }
 };
 
 const incrementVerificationAttempts = async (id) => {
@@ -510,7 +538,7 @@ router.get('/me', getCurrentUser);
 
 // Verify signup and create user
 router.post(
-  '/signup/verify',
+  '/api/auth/signup/verify',
   [
     body('identifier').notEmpty().trim().withMessage('Identifier is required'),
     body('code').notEmpty().withMessage('Verification code is required')
@@ -622,14 +650,26 @@ router.post(
         password_hash: unverifiedUser.password_hash,
         first_name: unverifiedUser.first_name,
         last_name: unverifiedUser.last_name,
-        phone_number: unverifiedUser.phone_number,
+        phone_number: unverifiedUser.phone_number, // Make sure this is included
         user_type: unverifiedUser.user_type,
         is_verified: true,
         is_active: true
       };
       
+      // Log the data we're about to insert
       console.log('📝 [VERIFY] User data:', JSON.stringify(userData, null, 2));
       
+      // First, check if we have all required fields
+      if (!userData.phone_number) {
+        console.error('❌ [VERIFY] Missing phone number in user data');
+        return res.status(400).json({
+          success: false,
+          message: 'Phone number is required',
+          requiresResend: true
+        });
+      }
+      
+      // Insert the user
       const { data: newUser, error: createError } = await supabaseAdmin
         .from('users')
         .insert([userData])
