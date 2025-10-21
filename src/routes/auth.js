@@ -110,13 +110,29 @@ const getUnverifiedUser = async (identifier) => {
       return null;
     }
     
+    // Reconstruct the user object with all necessary fields
     const user = {
+      // From user_data
       ...data.user_data,
-      phone_number: data.phone_number || data.user_data.phone_number, // Ensure phone_number is included
+      
+      // Ensure these fields are included and not overridden by user_data
+      email: data.email || data.user_data.email,
+      phone_number: data.phone_number || data.user_data.phone_number,
+      first_name: data.user_data.first_name,
+      last_name: data.user_data.last_name,
+      password_hash: data.user_data.password_hash,
+      user_type: data.user_data.user_type,
+      
+      // Verification related fields
       verificationCode: data.verification_code,
       verificationAttempts: data.verification_attempts || 0,
-      expiresAt: new Date(data.expires_at).getTime()
+      expiresAt: new Date(data.expires_at).getTime(),
+      
+      // Ensure we have the original ID
+      id: data.id
     };
+    
+    console.log('🔍 [GET_UNVERIFIED_USER] Reconstructed user object:', JSON.stringify(user, null, 2));
     
     console.log('🔄 [GET_UNVERIFIED_USER] Returning user:', JSON.stringify(user, null, 2));
     return user;
@@ -645,29 +661,40 @@ router.post(
 
       // Create the user in the database
       console.log('👤 [VERIFY] Creating user in database...');
+      
+      // Ensure all required fields are present
+      const requiredFields = ['email', 'phone_number', 'first_name', 'last_name', 'password_hash', 'user_type'];
+      const missingFields = requiredFields.filter(field => !unverifiedUser[field]);
+      
+      if (missingFields.length > 0) {
+        console.error('❌ [VERIFY] Missing required fields:', missingFields);
+        return res.status(400).json({
+          success: false,
+          message: `Missing required fields: ${missingFields.join(', ')}`,
+          requiresResend: true
+        });
+      }
+      
       const userData = {
         email: unverifiedUser.email,
-        password_hash: unverifiedUser.password_hash,
+        phone_number: unverifiedUser.phone_number,
         first_name: unverifiedUser.first_name,
         last_name: unverifiedUser.last_name,
-        phone_number: unverifiedUser.phone_number, // Make sure this is included
+        password_hash: unverifiedUser.password_hash,
         user_type: unverifiedUser.user_type,
         is_verified: true,
-        is_active: true
+        is_active: true,
+        country: 'Nigeria',  // Add default country
+        rating: 0,           // Initialize rating
+        total_earnings: 0,   // Initialize earnings
+        total_spent: 0,      // Initialize total spent
+        completed_tasks: 0,  // Initialize completed tasks
+        failed_tasks: 0,     // Initialize failed tasks
+        cancelled_tasks: 0   // Initialize cancelled tasks
       };
       
       // Log the data we're about to insert
       console.log('📝 [VERIFY] User data:', JSON.stringify(userData, null, 2));
-      
-      // First, check if we have all required fields
-      if (!userData.phone_number) {
-        console.error('❌ [VERIFY] Missing phone number in user data');
-        return res.status(400).json({
-          success: false,
-          message: 'Phone number is required',
-          requiresResend: true
-        });
-      }
       
       // Insert the user
       const { data: newUser, error: createError } = await supabaseAdmin
