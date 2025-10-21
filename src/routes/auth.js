@@ -467,9 +467,24 @@ router.get('/me', getCurrentUser);
 router.post(
   '/verify-signup',
   [
-    body('identifier').notEmpty().trim(),
-    body('code').notEmpty().isLength({ min: 6, max: 6 })
+    body('identifier').notEmpty().trim().withMessage('Identifier is required'),
+    body('code').notEmpty().withMessage('Verification code is required')
+      .isLength({ min: 6, max: 6 }).withMessage('Code must be 6 digits')
+      .isNumeric().withMessage('Code must contain only numbers')
   ],
+  (req, res, next) => {
+    console.log('Verify-signup request body:', JSON.stringify(req.body, null, 2));
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log('Validation errors:', errors.array());
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+    next();
+  },
   validateRequest,
   async (req, res) => {
     try {
