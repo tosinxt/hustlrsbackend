@@ -4,8 +4,8 @@
   "description": "Backend API for Hustlrs - Task marketplace like Uber for any service",
   "main": "src/server.ts",
   "scripts": {
-    "start": "node src/server.ts",
-    "dev": "nodemon src/server.ts",
+    "start": "ts-node src/server.ts",
+    "dev": "ts-node-dev --respawn src/server.ts",
     "test": "jest",
     "migrate": "npx prisma migrate dev",
     "generate": "npx prisma generate",
