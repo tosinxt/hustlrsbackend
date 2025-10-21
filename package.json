@@ -2,10 +2,11 @@
   "name": "hustlrs-backend",
   "version": "1.0.0",
   "description": "Backend for Hustlrs application",
+  "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
+    "start": "node --experimental-modules --es-module-specifier-resolution=node src/server.js",
+    "dev": "nodemon --experimental-modules --es-module-specifier-resolution=node src/server.js",
     "test": "jest",
     "migrate": "node -e \"require('dotenv').config(); require('node-pg-migrate').default({ direction: 'up' })\""
   },
