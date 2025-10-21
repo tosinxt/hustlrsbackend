@@ -675,6 +675,7 @@ router.post(
         });
       }
       
+      // Only include fields that exist in the users table
       const userData = {
         email: unverifiedUser.email,
         phone_number: unverifiedUser.phone_number,
@@ -684,13 +685,12 @@ router.post(
         user_type: unverifiedUser.user_type,
         is_verified: true,
         is_active: true,
-        country: 'Nigeria',  // Add default country
-        rating: 0,           // Initialize rating
+        country: 'Nigeria',  // Default country
+        rating: 0,           // Default rating
         total_earnings: 0,   // Initialize earnings
         total_spent: 0,      // Initialize total spent
-        completed_tasks: 0,  // Initialize completed tasks
-        failed_tasks: 0,     // Initialize failed tasks
-        cancelled_tasks: 0   // Initialize cancelled tasks
+        completed_tasks: 0   // Initialize completed tasks
+        // Removed cancelled_tasks and failed_tasks as they don't exist in the table
       };
       
       // Log the data we're about to insert
