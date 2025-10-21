@@ -26,6 +26,7 @@ interface AuthRequest extends Request {
     userType?: UserType;
     token?: string;
     newPassword?: string;
+    currentPassword?: string; // Added for change-password
   };
   headers: {
     authorization?: string;
@@ -51,6 +52,68 @@ router.post('/signup', (req, res, next) => {
   req.originalUrl = '/register';
   next();
 });
+
+// Login user
+router.post(
+  '/login',
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('password').notEmpty(),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { email, password } = req.body;
+
+      // Authenticate with Supabase
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        return res.status(401).json({ message: 'Invalid credentials' });
+      }
+
+      // Generate JWT token
+      const token = generateToken(data.user.id);
+      
+      // Get user profile
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
+          token,
+          user: {
+            id: userProfile?.id,
+            email: userProfile?.email,
+            firstName: userProfile?.first_name,
+            lastName: userProfile?.last_name,
+            phoneNumber: userProfile?.phone_number,
+            userType: userProfile?.user_type,
+            isVerified: userProfile?.email_confirmed_at !== null,
+          },
+        },
+      });
+    } catch (error: any) {
+      console.error('Login error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'An error occurred during login',
+      });
+    }
+  }
+);
 
 // Register a new user
 router.post(
@@ -242,19 +305,33 @@ router.get('/me', async (req, res) => {
 });
 
 // Logout
-router.post('/logout', async (req, res) => {
+router.post('/logout', async (req: Request, res: Response) => {
   try {
-    await supabase.auth.signOut();
-    res.json({ message: 'Logged out successfully' });
-  } catch (error: any) {
+    // Sign out from Supabase
+    const { error } = await supabase.auth.signOut();
+    
+    if (error) {
+      console.error('Logout error:', error);
+      return res.status(500).json({ 
+        success: false,
+        message: 'Error logging out from Supabase' 
+      });
+    }
+    
+    res.json({ 
+      success: true,
+      message: 'Logged out successfully' 
+    });
+  } catch (error) {
     console.error('Logout error:', error);
-    res.status(500).json({
-      message: error.message || 'An error occurred during logout',
+    res.status(500).json({ 
+      success: false,
+      message: 'An error occurred while logging out' 
     });
   }
 });
 
-// Forgot password
+// Forgot password - Request password reset
 router.post(
   '/forgot-password',
   [body('email').isEmail().normalizeEmail()],
@@ -267,20 +344,140 @@ router.post(
 
       const { email } = req.body;
 
-      // Send password reset email
+      // Send password reset email via Supabase
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.APP_URL}/reset-password`,
+        redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
       });
 
       if (error) {
-        throw error;
+        console.error('Password reset error:', error);
+        return res.status(400).json({
+          success: false,
+          message: error.message || 'Failed to send password reset email',
+        });
       }
 
-      res.json({ message: 'Password reset email sent' });
+      res.json({
+        success: true,
+        message: 'Password reset email sent successfully',
+      });
     } catch (error: any) {
       console.error('Forgot password error:', error);
       res.status(500).json({
-        message: error.message || 'An error occurred while processing your request',
+        success: false,
+        message: 'An error occurred while processing your request',
+      });
+    }
+  }
+);
+
+// Reset password
+router.post(
+  '/reset-password',
+  [
+    body('token').notEmpty(),
+    body('newPassword').isLength({ min: 6 }),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { token, newPassword } = req.body;
+
+      // Update password using Supabase
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        console.error('Password reset error:', error);
+        return res.status(400).json({
+          success: false,
+          message: error.message || 'Failed to reset password',
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Password reset successful',
+      });
+    } catch (error: any) {
+      console.error('Reset password error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'An error occurred while resetting your password',
+      });
+    }
+  }
+);
+
+// Change password
+router.post(
+  '/change-password',
+  [
+    body('currentPassword').notEmpty(),
+    body('newPassword').isLength({ min: 6 }),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
+      const token = req.headers.authorization?.split(' ')[1];
+
+      if (!token) {
+        return res.status(401).json({ message: 'No token provided' });
+      }
+
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+      
+      if (userError || !user) {
+        return res.status(401).json({ message: 'Invalid or expired token' });
+      }
+
+      // Reauthenticate user
+      if (!user.email) {
+        return res.status(400).json({ message: 'User email not found' });
+      }
+
+      const { data: { session }, error: authError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword,
+      });
+
+      if (authError || !session) {
+        return res.status(401).json({ message: 'Current password is incorrect' });
+      }
+
+      // Update password
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateError) {
+        console.error('Password update error:', updateError);
+        return res.status(400).json({
+          success: false,
+          message: updateError.message || 'Failed to update password',
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Password updated successfully',
+      });
+    } catch (error: any) {
+      console.error('Change password error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'An error occurred while changing your password',
       });
     }
   }
