@@ -538,7 +538,7 @@ router.get('/me', getCurrentUser);
 
 // Verify signup and create user
 router.post(
-  '/api/auth/signup/verify',
+  '/signup/verify',
   [
     body('identifier').notEmpty().trim().withMessage('Identifier is required'),
     body('code').notEmpty().withMessage('Verification code is required')
