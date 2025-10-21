@@ -11,6 +11,7 @@ const router = Router();
 const INACTIVITY_THRESHOLD = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
 
 // Generate JWT token
+// Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign(
     { userId },
@@ -39,10 +40,6 @@ const needsOTPVerification = (user) => {
 
 const comparePasswords = async (password, hash) => {
   return await bcrypt.compare(password, hash);
-};
-
-const generateToken = (userId) => {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
 };
 
 // Validation middleware
