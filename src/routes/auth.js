@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
 import { supabase, supabaseAdmin } from '../services/supabase.js';
+import { sendVerificationCode, verifyCode } from '../services/smsService.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -118,13 +119,21 @@ router.post(
       if (createError) throw createError;
       if (!newUser) throw new Error('Failed to create user');
 
+      // Send verification code
+      const smsResult = await sendVerificationCode(phone_number);
+      if (!smsResult.success) {
+        console.error('Failed to send verification code:', smsResult.message);
+        // Don't fail the registration, just log the error
+      }
+
       // Generate token
       const token = generateToken(newUser.id);
 
       // Return success response
       return res.status(201).json({
         success: true,
-        message: 'User registered successfully',
+        message: 'User registered successfully. ' + (smsResult.success ? 'Verification code sent.' : 'Failed to send verification code.'),
+        requiresVerification: true,
         data: {
           user: {
             id: newUser.id,
@@ -265,10 +274,94 @@ export const getCurrentUser = async (req, res) => {
 // Add the route for getting current user
 router.get('/me', getCurrentUser);
 
+// Verify phone number
+router.post(
+  '/verify-phone',
+  [
+    body('phoneNumber').notEmpty().trim(),
+    body('code').notEmpty().isLength({ min: 6, max: 6 })
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { phoneNumber, code } = req.body;
+      
+      const result = verifyCode(phoneNumber, code);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      // Update user as verified
+      const { data: user, error } = await supabaseAdmin
+        .from('users')
+        .update({ is_verified: true })
+        .eq('phone_number', phoneNumber)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        message: 'Phone number verified successfully',
+        data: {
+          isVerified: true
+        }
+      });
+    } catch (error) {
+      console.error('Error verifying phone:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to verify phone number',
+        error: error.message
+      });
+    }
+  }
+);
+
+// Resend verification code
+router.post(
+  '/resend-verification',
+  [
+    body('phoneNumber').notEmpty().trim()
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+      
+      const result = await sendVerificationCode(phoneNumber);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Verification code resent successfully'
+      });
+    } catch (error) {
+      console.error('Error resending verification code:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to resend verification code',
+        error: error.message
+      });
+    }
+  }
+);
+
 // Alias /signup to /register
-router.post('/signup', (req, res) => {
+router.post('/signup', (req, res, next) => {
   req.url = '/register';
-  router.handle(req, res);
-});
+  next();
+}, router);
 
 export default router;
