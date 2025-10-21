@@ -1,21 +1,11 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { body, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
-const twilio = require('twilio');
+import { Router } from 'express';
+import { body, validationResult } from 'express-validator';
+import { supabase, supabaseAdmin } from '../services/supabase.js';
+import { sendVerificationCode, verifyCode } from '../services/smsService.js';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
-const router = express.Router();
-const prisma = new PrismaClient();
-
-// Initialize Twilio (for SMS verification)
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-// Temporary storage for verification codes (use Redis in production)
-const verificationCodes = new Map();
+const router = Router();
 
 // Inactivity threshold (30 days)
 const INACTIVITY_THRESHOLD = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
@@ -47,226 +37,140 @@ const needsOTPVerification = (user) => {
   return daysSinceActivity > INACTIVITY_THRESHOLD;
 };
 
-/**
- * @route   POST /api/auth/signup
- * @desc    Register new user and send OTP
- * @access  Public
- */
-router.post('/signup', [
-  body('email').isEmail().withMessage('Please provide a valid email'),
-  body('phoneNumber').optional().isMobilePhone().withMessage('Please provide a valid phone number'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('firstName').notEmpty().withMessage('First name is required'),
-  body('lastName').notEmpty().withMessage('Last name is required'),
-  body('userType').isIn(['CUSTOMER', 'HUSTLER', 'BOTH']).withMessage('Invalid user type')
-], async (req, res) => {
-  try {
-    console.log('\n📝 SIGNUP REQUEST');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-    
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      console.log('❌ Validation Errors:', JSON.stringify(errors.array(), null, 2));
-      return res.status(400).json({
-        success: false,
-        message: errors.array()[0].msg,
-        errors: errors.array()
-      });
-    }
+const comparePasswords = async (password, hash) => {
+  return await bcrypt.compare(password, hash);
+};
 
-    const { email, phoneNumber, password, firstName, lastName, userType } = req.body;
-    console.log('✅ Validation passed');
-    console.log('User details:', { email, phoneNumber, firstName, lastName, userType });
+const generateToken = (userId) => {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+};
 
-    // Check if user already exists
-    console.log('🔍 Checking for existing user...');
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email },
-          { phoneNumber }
-        ]
-      }
+// Validation middleware
+const validateRequest = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
     });
+  }
+  next();
+};
 
-    if (existingUser) {
-      console.log('⚠️  User already exists');
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists with this email or phone number'
-      });
-    }
-    console.log('✅ No existing user found');
-
-    // Hash password
-    console.log('🔐 Hashing password...');
-    const hashedPassword = await hashPassword(password);
-
-    // Generate OTP
-    const code = generateVerificationCode();
-    const identifier = email || phoneNumber;
-    console.log('🔢 Generated OTP:', code, 'for identifier:', identifier);
-    
-    // Store code temporarily (expires in 10 minutes)
-    verificationCodes.set(identifier, {
-      code,
-      email,
-      phoneNumber,
-      password: hashedPassword,
-      firstName,
-      lastName,
-      userType,
-      expiresAt: Date.now() + 10 * 60 * 1000
-    });
-    console.log('💾 Verification code stored');
-
-    // Send OTP via SMS or Email
-    let otpSent = false;
+// Register new user
+router.post(
+  '/register',
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6 }),
+    body('firstName').notEmpty().trim(),
+    body('lastName').notEmpty().trim(),
+    body('phoneNumber').notEmpty().trim(),
+    body('userType').optional().isIn(['CUSTOMER', 'HUSTLER', 'BOTH'])
+  ],
+  validateRequest,
+  async (req, res) => {
     try {
-      if (phoneNumber && process.env.TWILIO_ACCOUNT_SID) {
-        await twilioClient.messages.create({
-          body: `Your Hustlrs verification code is: ${code}`,
-          from: process.env.TWILIO_PHONE_NUMBER,
-          to: phoneNumber
+      // Handle both camelCase and snake_case request bodies
+      const { 
+        email, 
+        password, 
+        firstName, 
+        lastName, 
+        phoneNumber,
+        // Handle both camelCase and snake_case
+        first_name = firstName,
+        last_name = lastName,
+        phone_number = phoneNumber,
+        user_type = 'CUSTOMER',
+        userType = user_type
+      } = req.body;
+
+      // Validate required fields
+      if (!email || !password || !first_name || !last_name || !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields',
+          errors: [
+            !email && 'Email is required',
+            !password && 'Password is required',
+            !first_name && 'First name is required',
+            !last_name && 'Last name is required',
+            !phone_number && 'Phone number is required'
+          ].filter(Boolean)
         });
-        otpSent = true;
       }
-    } catch (error) {
-      console.log('OTP send failed, logging code:', code);
-    }
 
-    console.log('✅ SIGNUP SUCCESS');
-    console.log('📧 OTP:', code, 'for', identifier);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      // Check if user already exists
+      const { data: existingUser, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .or(`email.eq.${email},phone_number.eq.${phone_number}`)
+        .maybeSingle();
 
-    res.json({
-      success: true,
-      message: otpSent ? 'Verification code sent' : 'Verification code generated (check server logs)',
-      identifier
-    });
-
-  } catch (error) {
-    console.error('\n❌ SIGNUP ERROR');
-    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.error('Error:', error.message);
-    console.error('Stack:', error.stack);
-    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed'
-    });
-  }
-});
-
-/**
- * @route   POST /api/auth/verify-signup
- * @desc    Verify OTP and complete signup
- * @access  Public
- */
-router.post('/verify-signup', [
-  body('identifier').notEmpty().withMessage('Identifier is required'),
-  body('code').isLength({ min: 6, max: 6 }).withMessage('Verification code must be 6 digits')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array()
-      });
-    }
-
-    const { identifier, code } = req.body;
-    
-    // Check verification code
-    const storedData = verificationCodes.get(identifier);
-    
-    if (!storedData) {
-      return res.status(400).json({
-        success: false,
-        message: 'Verification code not found or expired'
-      });
-    }
-
-    if (storedData.code !== code) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid verification code'
-      });
-    }
-
-    if (Date.now() > storedData.expiresAt) {
-      verificationCodes.delete(identifier);
-      return res.status(400).json({
-        success: false,
-        message: 'Verification code expired'
-      });
-    }
-
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        email: storedData.email,
-        phoneNumber: storedData.phoneNumber,
-        password: storedData.password,
-        firstName: storedData.firstName,
-        lastName: storedData.lastName,
-        userType: storedData.userType,
-        isVerified: true,
-        lastLoginAt: new Date(),
-        lastActivityAt: new Date()
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: 'User with this email or phone number already exists'
+        });
       }
-    });
 
-    // Remove used code
-    verificationCodes.delete(identifier);
+      // Hash password
+      const hashedPassword = await hashPassword(password);
 
-    // Generate JWT token
-    const token = generateToken(user.id);
+      // Create user using admin client to bypass RLS
+      const { data: newUser, error: createError } = await supabaseAdmin
+        .from('users')
+        .insert([
+          {
+            email: email.toLowerCase().trim(),
+            password_hash: hashedPassword,
+            first_name: first_name.trim(),
+            last_name: last_name.trim(),
+            phone_number: phone_number.trim(),
+            user_type: userType.toUpperCase(),
+            is_verified: false,
+            is_active: true
+          }
+        ])
+        .select()
+        .single();
 
-    res.json({
-      success: true,
-      message: 'Account created successfully',
-      data: {
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          phoneNumber: user.phoneNumber,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          userType: user.userType,
-          isVerified: user.isVerified,
-          rating: user.rating,
-          tasksCompleted: user.tasksCompleted
+      if (createError) throw createError;
+      if (!newUser) throw new Error('Failed to create user');
+
+      // Send verification code
+      const smsResult = await sendVerificationCode(phone_number);
+      if (!smsResult.success) {
+        console.error('Failed to send verification code:', smsResult.message);
+        // Don't fail the registration, just log the error
+      }
+
+      // Generate token
+      const token = generateToken(newUser.id);
+
+      // Return success response
+      return res.status(201).json({
+        success: true,
+        message: 'User registered successfully. ' + (smsResult.success ? 'Verification code sent.' : 'Failed to send verification code.'),
+        requiresVerification: true,
+        data: {
+          user: {
+            id: newUser.id,
+            email: newUser.email,
+            firstName: newUser.first_name,
+            lastName: newUser.last_name,
+            phoneNumber: newUser.phone_number,
+            userType: newUser.user_type,
+            isVerified: newUser.is_verified
+          },
+          token
         }
-      }
-    });
-
-  } catch (error) {
-    console.error('Verify signup error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Verification failed'
-    });
-  }
-});
-
-/**
- * @route   POST /api/auth/login
- * @desc    Login with email/phone + password
- * @access  Public
- */
-router.post('/login', [
-  body('identifier').notEmpty().withMessage('Email or phone number is required'),
-  body('password').notEmpty().withMessage('Password is required')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
+      });
+    } catch (error) {
+      console.error('Registration error:', error);
+      return res.status(500).json({
         success: false,
         message: 'Validation failed',
         errors: errors.array()
@@ -500,16 +404,97 @@ router.post('/refresh-token', async (req, res) => {
   }
 });
 
-/**
- * @route   POST /api/auth/logout
- * @desc    Logout user (client-side token removal)
- * @access  Private
- */
-router.post('/logout', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
-});
+// Add the route for getting current user
+router.get('/me', getCurrentUser);
+
+// Verify phone number
+router.post(
+  '/verify-phone',
+  [
+    body('phoneNumber').notEmpty().trim(),
+    body('code').notEmpty().isLength({ min: 6, max: 6 })
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { phoneNumber, code } = req.body;
+      
+      const result = verifyCode(phoneNumber, code);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      // Update user as verified
+      const { data: user, error } = await supabaseAdmin
+        .from('users')
+        .update({ is_verified: true })
+        .eq('phone_number', phoneNumber)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        message: 'Phone number verified successfully',
+        data: {
+          isVerified: true
+        }
+      });
+    } catch (error) {
+      console.error('Error verifying phone:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to verify phone number',
+        error: error.message
+      });
+    }
+  }
+);
+
+// Resend verification code
+router.post(
+  '/resend-verification',
+  [
+    body('phoneNumber').notEmpty().trim()
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+      
+      const result = await sendVerificationCode(phoneNumber);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Verification code resent successfully'
+      });
+    } catch (error) {
+      console.error('Error resending verification code:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to resend verification code',
+        error: error.message
+      });
+    }
+  }
+);
+
+// Alias /signup to /register
+router.post('/signup', (req, res, next) => {
+  req.url = '/register';
+  next();
+}, router);
 
 module.exports = router;
